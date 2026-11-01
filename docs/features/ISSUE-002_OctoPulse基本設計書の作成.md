@@ -3,7 +3,7 @@ title: "課題記録: OctoPulse基本設計書の作成"
 document_type: "issue_record"
 document_role: "reference"
 ssot_scope: "issue_record"
-status: "draft"
+status: "approved"
 version: "1.0"
 created_at: "2026-11-01"
 updated_at: "2026-11-01"
@@ -25,7 +25,7 @@ related_documents:
 | :----------- | :----------------------------------------------------------------------- |
 | Issue番号    | #2                                                                       |
 | Issue URL    | https://github.com/xzyozi/gh-archive-lakehouse/issues/2                  |
-| 状態         | Open                                                                     |
+| 状態         | Closed (PR #3 にてマージ完了)                            |
 | 作成者       | xzyozi                                                                   |
 | 担当者       | xzyozi                                                                   |
 | 記録日時     | 2026-11-01                                                               |
@@ -64,8 +64,8 @@ related_documents:
      - *決定*: 抽出データソース（1日1回更新）を必須とし、第三者閲覧によるBigQueryスキャンを完全0化する。
   8. **Terraformステート管理**:
      - *決定*: GCSバックエンド（US Region）を採用し、完全0円かつCI/CD対応可能な構成とする。
-- **対応状況**: 対応中
-- **次のアクション**: 基本設計書 `docs/design/BD-001_基本設計書.md` の作成およびPR提出。
+- **対応状況**: 対応済み (PR #3 にて制定完了)
+- **次のアクション**: なし（基本設計完了）
 
 ## 3. 関連文書
 

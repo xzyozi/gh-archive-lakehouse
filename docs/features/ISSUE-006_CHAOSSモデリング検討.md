@@ -3,7 +3,7 @@ title: "課題記録: CHAOSSモデリング検討"
 document_type: "issue_record"
 document_role: "reference"
 ssot_scope: "issue_record"
-status: "draft"
+status: "approved"
 version: "1.0"
 created_at: "2026-11-01"
 updated_at: "2026-11-01"
@@ -25,7 +25,7 @@ related_documents:
 | :----------- | :----------------------------------------------------------------------- |
 | Issue番号    | #6                                                                       |
 | Issue URL    | https://github.com/xzyozi/gh-archive-lakehouse/issues/6                  |
-| 状態         | Open (壁打ちプール中)                                                    |
+| 状態         | Closed (策定・合意完了)                                                  |
 | 作成者       | xzyozi                                                                   |
 | 担当者       | xzyozi                                                                   |
 | 記録日時     | 2026-11-01                                                               |
@@ -37,12 +37,18 @@ related_documents:
    - `TEST-001` の結果より、1時間で活動のあったユニークリポジトリ約7,000件のうち、大半が単発1件のイベント。
    - 日次換算で「WatchEvent >= 3 かつ (Fork+Issue+PR) >= 1」を設けることで、約1,000〜3,000件の有望リポジトリ群に絞り込めると判明。
 2. **Attention Velocity (X軸)**:
-   - 日次新規Star獲得数のパーセンタイル、または直近7日移動平均。
+   - 日次新規Star獲得数のパーセンタイル順位（`PERCENT_RANK() OVER (PARTITION BY target_date ORDER BY daily_stars ASC)`）。
 3. **Engagement Depth (Y軸)**:
-   - PRがForkの7倍発生するため、発生頻度を考慮した加重（Fork * 2 + Issue * 1 + PR * 1 等）が有効。
-4. **スパム・ボット検知フラグ**:
-   - テスト自動化ボット（PR 300件超・Star 0件）を排除するためのフラグ設計が必要。
+   - PRがForkの約7倍発生するため、発生頻度を考慮した加重複合スコア `(daily_forks * 3) + (daily_prs * 2) + (daily_issues * 1)` のパーセンタイル順位を採用。
+4. **4象限セグメンテーション（Cutoff）**:
+   - 上位20%（パーセンタイル >= 0.80）を境界値とし、Hyper-Growth, Viral Spotlight, Silent Utility, Niche に分類。
+5. **スパム・ボット検知フラグ**:
+   - `is_suspicious_star_surge`: `daily_stars >= 10 AND (daily_forks + daily_prs) = 0`
+   - `is_bot_generated_prs`: `daily_prs >= 50 AND daily_stars = 0`（`mergifyio-testing` 等のテスト自動化ボット除外用）
+   - `is_newborn_buzz`: `repo_age_days <= 7 AND daily_stars >= 10`
 
-## 2. 次のアクション
+## 2. 決定事項および対応状況
 
-- 本検証結果を元に、ユーザーとの最終壁打ちを行い、dbtモデル実装時にロジックを確定する。
+- **決定事項**: 上記の確定仕様を `DS-001_データ構造仕様書.md` 第2.6節へ正式反映。
+- **対応状況**: 対応済み（DS-001 Rev.1.1 反映完了）
+- **次のアクション**: dbt Silver/Gold モデル実装時に上記ロジックをSQL化する。

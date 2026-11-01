@@ -5,7 +5,7 @@ document_number: "OCTO-DD-001"
 document_role: "normative"
 ssot_scope: "module_behavior"
 status: "draft"
-version: "1.0"
+version: "1.1"
 created_at: "2026-11-01"
 updated_at: "2026-11-01"
 author: "xzyozi"
@@ -44,10 +44,11 @@ related_documents:
 
 | 機能ID | 関数・機能名 | 呼び出し元 | 主な呼び出し先 | 同期 / 非同期 | 冪等性 | 外部副作用 | 公開範囲 |
 | :--- | :--- | :--- | :--- | :---: | :---: | :--- | :---: |
-| `F-ING-001` | `fetch_hourly_stream` | `process_daily_archive` | GH Archive (HTTP) | 同期 | あり | なし（読取のみ） | 内部 |
-| `F-ING-002` | `extract_target_events` | `process_daily_archive` | Python Generator | 同期 | あり | なし（メモリ上純粋処理） | 内部 |
-| `F-ING-003` | `upload_stream_to_gcs` | `process_daily_archive` | GCS Client Library | 同期 | 条件付き | GCS オブジェクト作成 | 内部 |
-| `F-ING-004` | `run_daily_ingestion` | Airflow PythonOperator | `F-ING-001`〜`003` | 同期 | あり | GCS 日次JSONL上書き作成 | 外部公開 |
+| `F-ING-001` | `fetch_hourly_stream` | `run_daily_ingestion_to_writer` | GH Archive (HTTP) | 同期 | あり | なし（読取のみ） | 内部 |
+| `F-ING-002` | `extract_target_events` | `run_daily_ingestion_to_writer` | Python Generator | 同期 | あり | なし（メモリ上純粋処理） | 内部 |
+| `F-ING-003` | `build_gcs_blob_path` | `run_daily_ingestion` | なし（純粋関数） | 同期 | あり | なし | 内部 |
+| `F-ING-004` | `run_daily_ingestion` | Airflow PythonOperator | `F-ING-003`, `005` | 同期 | あり | GCS 日次JSONL上書き作成 | 外部公開 |
+| `F-ING-005` | `run_daily_ingestion_to_writer` | `run_daily_ingestion` / テスト | `F-ING-001`, `002` | 同期 | あり | 渡された Writer へのストリーム出力 | 外部公開 |
 
 ---
 
@@ -56,7 +57,7 @@ related_documents:
 #### ① 機能ID: `F-ING-004` `run_daily_ingestion`（日次バッチ実行エントリポイント）
 
 - **関数識別名**: `run_daily_ingestion`
-- **機能概要**: 対象日のGH Archive 24時間分を逐次ストリーム処理し、GCSへJSONLとして上書き保存する。
+- **機能概要**: 対象日のGH Archive 24時間分をGCS Blobへ直接ストリームオープンして抽出し、JSONLとして上書き保存する。
 - **事前条件**: `gcs_bucket_name` が有効であり、実行環境（ADC）にGCS書き込み権限があること。
 - **事後条件**: 抽出イベントが指定のGCSパス（`gs://<bucket>/raw/YYYY/MM/DD/events_YYYYMMDD.jsonl`）に永続化され、ローカルファイルへの書き込みが0 bytesであること。
 - **外部副作用**: 対象GCSオブジェクトの上書き作成（再実行時の冪等性担保）。
@@ -66,7 +67,8 @@ related_documents:
 | :--- | :--- | :---: | :---: | :--- | :--- |
 | `target_date` | `datetime.date` | 必須 | 不可 | なし | 処理対象日（前日UTC日付） |
 | `gcs_bucket_name` | `str` | 必須 | 不可 | なし | アップロード先GCSバケット名 |
-| `chunk_size_bytes` | `int` | 任意 | 不可 | `8388608` (8MB) | ストリーム読み込みバッファサイズ |
+| `storage_client` | `storage.Client` | 任意 | 可 | `None` | GCS クライアントインスタンス（未指定時は自動生成） |
+| `hours` | `list[int]` | 任意 | 可 | `None` | 処理対象時間リスト（未指定時は `0..23` の全24時間） |
 
 ##### 出力 DTO スキーマ・戻り値仕様
 | フィールド | データ型 | 必須性 | NULL可 | 正常時の意味・制約 |
@@ -81,7 +83,21 @@ related_documents:
 
 ---
 
-#### ② 機能ID: `F-ING-002` `extract_target_events`（インフライト抽出ジェネレータ）
+#### ② 機能ID: `F-ING-005` `run_daily_ingestion_to_writer`（ストリーム書き込みコア関数）
+
+- **関数識別名**: `run_daily_ingestion_to_writer`
+- **機能概要**: 任意の `TextWritable`（`blob.open('w')` や `StringIO`）に直接インフライト抽出データを流し込むテスタブルなコア関数。
+- **引数**:
+  - `target_date: datetime.date`: 対象日
+  - `writer: TextWritable`: 書き込み先ストリーム
+  - `destination_uri: str`: 送信先の識別URI
+  - `hours: list[int] | None`: 対象時間（デフォルト `0..23`）
+- **戻り値**: `IngestionSummaryDTO`
+- **外部副作用**: `writer.write` へのデータ書き込み
+
+---
+
+#### ③ 機能ID: `F-ING-002` `extract_target_events`（インフライト抽出ジェネレータ）
 
 - **関数識別名**: `extract_target_events`
 - **引数**: `byte_stream: Iterator[bytes]`（HTTP圧縮ストリームのバイト列イテレータ）
@@ -174,3 +190,4 @@ sequenceDiagram
 | 版数 | 改訂日 | 変更者 | 変更内容・変更理由 (Why) |
 | :--- | :--- | :--- | :--- |
 | Rev.1.0 | 2026-11-01 | xzyozi | 新規作成（初版制定: Issue #4 対応） |
+| Rev.1.1 | 2026-11-01 | xzyozi | 実装(gcs_uploader.py)に合わせて run_daily_ingestion の引数(storage_client, hours)および run_daily_ingestion_to_writer 契約を追加・同期（Issue #11 対応） |

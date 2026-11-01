@@ -2,8 +2,12 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
+build/
+dist/
 .venv/
 venv/
+uv.lock
 # Environment variables / secrets
 .env
 .env.*
