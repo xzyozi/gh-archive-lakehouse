@@ -3,10 +3,10 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# プロジェクト固有の情報（ここだけ書き換えればOK）
-name = "my-awesome-project"  
+# プロジェクト固有の情報
+name = "octopulse"
 version = "0.1.0"
-description = "A modern Python project template"
+description = "OctoPulse: CHAOSS-compliant Emerging OSS Discovery Lakehouse"
 readme = "README.md"
 requires-python = ">=3.10"
 
