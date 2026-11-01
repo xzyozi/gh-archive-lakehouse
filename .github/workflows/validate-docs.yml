@@ -1,0 +1,44 @@
+name: Validate docs
+
+# docs/ 配下の Markdown のメタデータ・リンク・文字コードを検証する。
+# Python はこのジョブ内でのみ使用する（派生プロジェクトの言語には影響しない）。
+# ci.yml の契約（.github/ci.sh / Makefile の ci）は派生プロジェクト側のために空けておく。
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "docs/**/*.md"
+      - ".github/scripts/validate_docs.py"
+      - ".github/workflows/validate-docs.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "docs/**/*.md"
+      - ".github/scripts/validate_docs.py"
+      - ".github/workflows/validate-docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate docs
+        shell: bash
+        run: python .github/scripts/validate_docs.py docs

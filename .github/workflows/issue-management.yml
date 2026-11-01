@@ -1,0 +1,44 @@
+name: Issue Management
+
+# Issue 周りの自動管理を本ワークフローに集約する。
+# 現在の機能:
+#   - 最終更新から一定期間経過した Issue に stale ラベルを付与する（クローズはしない）
+#   - stale 付与後に更新（コメント等）があれば stale ラベルを自動除去する
+# 注意: schedule はデフォルトブランチ（main）上のファイルのみ実行される。
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      debug-only:
+        description: 'ドライラン（ラベル変更を行わずログのみ出力）'
+        type: boolean
+        default: false
+
+permissions:
+  issues: write
+
+jobs:
+  stale-label:
+    name: Stale label
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label stale issues
+        uses: actions/stale@v9
+        with:
+          # Issue のみ対象。PR は対象外。
+          days-before-issue-stale: 30
+          days-before-pr-stale: -1
+          # 自動クローズはしない（ラベル付与のみ）。
+          days-before-issue-close: -1
+          days-before-pr-close: -1
+          stale-issue-label: stale
+          # stale 付与後に更新があればラベルを除去する。
+          remove-stale-when-updated: true
+          # 放置してよい Issue はこれらのラベルで除外する。
+          exempt-issue-labels: pinned,security,keep-open
+          # コメントを残さず、ラベル付与のみ行う。
+          stale-issue-message: ''
+          operations-per-run: 100
+          debug-only: ${{ inputs.debug-only || false }}
