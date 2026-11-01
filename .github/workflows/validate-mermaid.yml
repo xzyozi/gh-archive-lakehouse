@@ -29,7 +29,9 @@ jobs:
       - name: Restore Mermaid CLI cache
         uses: actions/cache@v4
         with:
-          path: ~/.npm
+          path: |
+            ~/.npm
+            ~/.cache/puppeteer
           key: ${{ runner.os }}-mermaid-cli-11.4.2
 
       - name: Validate changed Mermaid diagrams
