@@ -47,18 +47,40 @@ def parse_hours(spec: str) -> list[int]:
     return sorted(set(hours))
 
 
-def collect_day(target_date: datetime.date, hours: list[int]) -> dict[str, Counter[str]]:
-    """リポジトリ単位で種別ごとの件数を数える (メモリ上のみ)。"""
+def collect_day(
+    target_date: datetime.date,
+    hours: list[int],
+    repo_created_at_map: dict[str, datetime.datetime] | None = None,
+) -> tuple[dict[str, Counter[str]], dict[str, datetime.datetime]]:
+    """リポジトリ単位で種別ごとの件数と作成日時を収集する (メモリ上のみ)。"""
     counters: dict[str, Counter[str]] = {k: Counter() for k in ("star", "fork", "issue", "pr")}
+    created_map: dict[str, datetime.datetime] = repo_created_at_map if repo_created_at_map is not None else {}
     key_by_type = {"WatchEvent": "star", "ForkEvent": "fork", "IssuesEvent": "issue", "PullRequestEvent": "pr"}
     for hour in hours:
         started = time.time()
         count = 0
         for event in extract_target_events(fetch_hourly_stream(target_date, hour)):
-            counters[key_by_type[event["type"]]][event["repo"]["name"]] += 1
+            event_type = event.get("type")
+            repo = event.get("repo")
+            repo_name = repo.get("name") if isinstance(repo, dict) else None
+            if not repo_name:
+                continue
+
+            if event_type in key_by_type:
+                counters[key_by_type[event_type]][repo_name] += 1
+            elif event_type == "CreateEvent":
+                # CreateEvent(ref_type == "repository")
+                created_str = event.get("created_at")
+                if isinstance(created_str, str):
+                    try:
+                        dt = datetime.datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                        if repo_name not in created_map or dt < created_map[repo_name]:
+                            created_map[repo_name] = dt
+                    except (ValueError, TypeError):
+                        pass
             count += 1
         print(f"  {target_date} {hour:02d}h: {count:,} events ({time.time() - started:.1f}s)", file=sys.stderr)
-    return counters
+    return counters, created_map
 
 
 def percent_rank(values: list[int]) -> dict[int, float]:
@@ -78,7 +100,12 @@ def quantiles(values: list[int], points: tuple[float, ...]) -> dict[str, int]:
     return {f"p{int(p * 100)}": ordered[min(int(p * (len(ordered) - 1)), len(ordered) - 1)] for p in points}
 
 
-def summarize(target_date: datetime.date, counters: dict[str, Counter[str]]) -> dict[str, object]:
+def summarize(
+    target_date: datetime.date,
+    counters: dict[str, Counter[str]],
+    repo_created_at_map: dict[str, datetime.datetime] | None = None,
+) -> dict[str, object]:
+    created_map = repo_created_at_map if repo_created_at_map is not None else {}
     repos = set().union(*(c.keys() for c in counters.values()))
     rows = {
         r: {
@@ -89,6 +116,12 @@ def summarize(target_date: datetime.date, counters: dict[str, Counter[str]]) -> 
         }
         for r in repos
     }
+
+    def get_repo_age(r: str) -> int | None:
+        created_dt = created_map.get(r)
+        if created_dt is None:
+            return None
+        return (target_date - created_dt.date()).days
 
     def activity(v: dict[str, int]) -> int:
         return v["forks"] + v["issues"] + v["prs"]
@@ -125,16 +158,20 @@ def summarize(target_date: datetime.date, counters: dict[str, Counter[str]]) -> 
     eng_scores = {r: score(v, WEIGHTS_CURRENT) for r, v in population.items()}
     eng = percent_rank(list(eng_scores.values()))
     segments: Counter[str] = Counter()
+    quadrant_by_repo: dict[str, str] = {}
     for r, v in population.items():
         a, e = attn[v["stars"]], eng[eng_scores[r]]
         if a >= CUTOFF and e >= CUTOFF:
-            segments["Hyper-Growth"] += 1
+            seg = "Hyper-Growth"
         elif a >= CUTOFF:
-            segments["Viral Spotlight"] += 1
+            seg = "Viral Spotlight"
         elif e >= CUTOFF:
-            segments["Silent Utility"] += 1
+            seg = "Silent Utility"
         else:
-            segments["Niche / Emerging"] += 1
+            seg = "Niche / Emerging"
+        segments[seg] += 1
+        quadrant_by_repo[r] = seg
+
     result["segments"] = dict(segments)
     # 0.80 以上に入る件数が、理論値 (20%) からどれだけずれるか (同順位の影響)
     attn_hits = sum(1 for v in population.values() if attn[v["stars"]] >= CUTOFF)
@@ -145,15 +182,68 @@ def summarize(target_date: datetime.date, counters: dict[str, Counter[str]]) -> 
     # フラグ: 足切り前 (全リポジトリ) と足切り後 (母集団) の件数
     def flags(src: dict[str, dict[str, int]]) -> dict[str, int]:
         return {
-            "is_suspicious_star_surge": sum(1 for v in src.values() if v["stars"] >= 10 and v["forks"] + v["prs"] == 0),
+            "is_suspicious_star_surge": sum(
+                1 for v in src.values() if v["stars"] >= 10 and v["forks"] + v["prs"] == 0
+            ),
             "is_bot_generated_prs": sum(1 for v in src.values() if v["prs"] >= 50 and v["stars"] == 0),
+            "is_newborn_buzz": sum(
+                1
+                for r, v in src.items()
+                if (age := get_repo_age(r)) is not None and age <= 7 and v["stars"] >= 10
+            ),
         }
 
     result["flags_before_cutoff"] = flags(rows)
     result["flags_in_population"] = flags(population)
-    result["top5_by_stars"] = [
-        {"repo": r, **v} for r, v in sorted(population.items(), key=lambda kv: -kv[1]["stars"])[:5]
+
+    # 新星・注目リポジトリの目視確認用データ
+    hyper_repos = [
+        {
+            "repo": r,
+            "stars": rows[r]["stars"],
+            "forks": rows[r]["forks"],
+            "prs": rows[r]["prs"],
+            "issues": rows[r]["issues"],
+            "eng_score": eng_scores[r],
+            "repo_age_days": get_repo_age(r),
+        }
+        for r, seg in quadrant_by_repo.items()
+        if seg == "Hyper-Growth"
     ]
+    hyper_repos.sort(key=lambda x: -int(str(x["stars"])))
+    result["top10_hyper_growth"] = hyper_repos[:10]
+
+    viral_repos = [
+        {
+            "repo": r,
+            "stars": rows[r]["stars"],
+            "forks": rows[r]["forks"],
+            "prs": rows[r]["prs"],
+            "issues": rows[r]["issues"],
+            "eng_score": eng_scores[r],
+            "repo_age_days": get_repo_age(r),
+        }
+        for r, seg in quadrant_by_repo.items()
+        if seg == "Viral Spotlight"
+    ]
+    viral_repos.sort(key=lambda x: -int(str(x["stars"])))
+    result["top10_viral_spotlight"] = viral_repos[:10]
+
+    # newborn_buzz の該当一覧 (存在する場合)
+    newborn_candidates = [
+        {
+            "repo": r,
+            "quadrant": quadrant_by_repo.get(r, "Filtered_Out"),
+            "stars": rows[r]["stars"],
+            "forks": rows[r]["forks"],
+            "prs": rows[r]["prs"],
+            "repo_age_days": age,
+        }
+        for r in rows
+        if (age := get_repo_age(r)) is not None and age <= 7 and rows[r]["stars"] >= 10
+    ]
+    result["newborn_buzz_repos"] = newborn_candidates[:10]
+
     return result
 
 
@@ -166,9 +256,14 @@ def main() -> int:
     hours = parse_hours(args.hours)
 
     results = []
+    # 複数日にまたがるリポジトリ開設日時を累積追跡
+    accumulated_created_map: dict[str, datetime.datetime] = {}
     for target_date in args.date:
         print(f"=== {target_date} hours={hours} ===", file=sys.stderr)
-        results.append(summarize(target_date, collect_day(target_date, hours)))
+        counters, accumulated_created_map = collect_day(
+            target_date, hours, repo_created_at_map=accumulated_created_map
+        )
+        results.append(summarize(target_date, counters, accumulated_created_map))
     text = json.dumps(results, ensure_ascii=False, indent=2)
     if args.output:
         args.output.write_text(text + "\n", encoding="utf-8", newline="\n")
