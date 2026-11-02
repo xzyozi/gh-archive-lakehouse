@@ -12,8 +12,7 @@ requires-python = ">=3.10"
 
 # 必須のパッケージ
 dependencies = [
-    # 例: "requests>=2.31.0",
-    # 例: "pydantic>=2.0.0"
+    "google-cloud-storage>=2.10.0",
 ]
 
 [project.optional-dependencies]
