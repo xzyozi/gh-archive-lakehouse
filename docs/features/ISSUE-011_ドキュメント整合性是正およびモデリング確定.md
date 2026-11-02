@@ -22,15 +22,15 @@ related_documents:
 # 課題記録
 **[Governance] ドキュメント・実装間の整合性是正およびCHAOSSモデリング確定**
 
-| 項目         | 内容                                                                     |
-| :----------- | :----------------------------------------------------------------------- |
-| Issue番号    | #11                                                                      |
-| Issue URL    | https://github.com/xzyozi/gh-archive-lakehouse/issues/11                 |
-| 状態         | Open                                                                     |
-| 作成者       | xzyozi                                                                   |
-| 担当者       | xzyozi                                                                   |
-| 記録日時     | 2026-11-01                                                               |
-| 最終確認日時 | 2026-11-01                                                               |
+| 項目         | 内容                                                     |
+| :----------- | :------------------------------------------------------- |
+| Issue番号    | #11                                                      |
+| Issue URL    | https://github.com/xzyozi/gh-archive-lakehouse/issues/11 |
+| 状態         | Open                                                     |
+| 作成者       | xzyozi                                                   |
+| 担当者       | xzyozi                                                   |
+| 記録日時     | 2026-11-01                                               |
+| 最終確認日時 | 2026-11-01                                               |
 
 ## 1. Issue本文・概要
 
@@ -49,6 +49,7 @@ related_documents:
 4. **docs/features/ 課題記録の同期**:
    - `ISSUE-002` および `ISSUE-004` の状態を Closed へ更新し、Frontmatter を `approved` に進めた。
 5. **Issue #6 の壁打ち反映**:
+   - （注: 実データでの再検証が未了のため、2026-11-02 に「確定」から「暫定」へ変更。確定は Issue #15）
    - 足切り基準（Watch>=3 かつ アクティビティ>=1）、Attention Velocity（Starパーセンタイル）、Engagement Depth（加重Fork*3+PR*2+Issue*1のパーセンタイル）、4象限Cutoff（Top 20% = 0.80）、およびボット・スパム検知フラグを `DS-001` 第2.6節に確定反映。
 
 ## 3. 関連文書
