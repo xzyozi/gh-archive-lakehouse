@@ -1,0 +1,9 @@
+# OctoPulse Terraform 設定例 (terraform.tfvars)
+# 実際の適用時はこのファイルを terraform.tfvars にコピーして値を設定してください。
+# 注意: terraform.tfvars は .gitignore に含まれるためコミットされません。
+
+project_id        = "your-gcp-project-id"
+region            = "us-central1" # Always Free 枠死守のため us-central1 推奨
+environment       = "prod"
+dataset_prefix    = "octopulse"
+github_repository = "xzyozi/gh-archive-lakehouse"

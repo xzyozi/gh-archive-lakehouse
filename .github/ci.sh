@@ -20,3 +20,8 @@ echo "== mypy =="
 
 echo "== pytest =="
 "$PYTHON" -m pytest -q
+
+if command -v terraform >/dev/null 2>&1; then
+  echo "== terraform fmt =="
+  terraform fmt -check -recursive terraform/
+fi
