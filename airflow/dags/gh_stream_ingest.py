@@ -46,6 +46,7 @@ def execute_daily_ingestion(ds: str, **context: Any) -> dict[str, Any]:
         "processed_hours": summary.processed_hours,
         "failed_hours": summary.failed_hours,
         "status": summary.status,
+        "skipped_events": summary.skipped_events,
     }
 
     # A partial day must not look like success: downstream aggregation would silently

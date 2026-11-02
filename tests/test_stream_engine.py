@@ -12,6 +12,7 @@ from octopulse.ingestion.stream_engine import (
     build_gh_archive_url,
     extract_target_events,
     fetch_hourly_stream,
+    is_target_event,
 )
 
 
@@ -59,6 +60,36 @@ class TestStreamEngine(unittest.TestCase):
         extracted_ids = [e["id"] for e in extracted]
         self.assertEqual(extracted_ids, ["1", "3", "5", "6"])
 
+
+    def test_is_target_event_create_event_only_for_repository(self):
+        """CreateEvent は payload.ref_type が repository のときだけ対象。"""
+        self.assertTrue(is_target_event({"type": "CreateEvent", "payload": {"ref_type": "repository"}}))
+        self.assertFalse(is_target_event({"type": "CreateEvent", "payload": {"ref_type": "branch"}}))
+        self.assertFalse(is_target_event({"type": "CreateEvent", "payload": {"ref_type": "tag"}}))
+        self.assertFalse(is_target_event({"type": "CreateEvent", "payload": {}}))
+        self.assertFalse(is_target_event({"type": "CreateEvent", "payload": None}))
+        self.assertFalse(is_target_event({"type": "CreateEvent"}))
+
+    def test_is_target_event_four_base_types(self):
+        """既存 4 種は無条件で対象、それ以外は対象外。"""
+        for event_type in TARGET_EVENT_TYPES:
+            self.assertTrue(is_target_event({"type": event_type}))
+        self.assertFalse(is_target_event({"type": "PushEvent"}))
+        self.assertFalse(is_target_event({}))
+
+    def test_extract_target_events_keeps_only_repository_create_events(self):
+        """ストリーム抽出でリポジトリ作成の CreateEvent のみ通り、ブランチ/タグは除外される。"""
+        sample_events = [
+            {"id": "1", "type": "CreateEvent", "payload": {"ref_type": "repository"}},
+            {"id": "2", "type": "CreateEvent", "payload": {"ref_type": "branch"}},
+            {"id": "3", "type": "CreateEvent", "payload": {"ref_type": "tag"}},
+            {"id": "4", "type": "WatchEvent"},
+        ]
+        compressed = gzip.compress("\n".join(json.dumps(e) for e in sample_events).encode("utf-8"))
+
+        extracted = list(extract_target_events(iter([compressed])))
+
+        self.assertEqual([e["id"] for e in extracted], ["1", "4"])
 
     def test_extract_target_events_rejects_truncated_gzip(self):
         """A stream that ends before the gzip trailer must fail, not silently succeed."""
