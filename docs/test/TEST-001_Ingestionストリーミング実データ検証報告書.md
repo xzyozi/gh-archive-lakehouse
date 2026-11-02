@@ -110,7 +110,7 @@ related_documents:
 - 生出力の内訳: `PullRequestEvent` 286.3MB（約92%、1件あたり約23KB）、`IssuesEvent` 11.2MB、`ForkEvent` 10.7MB、`WatchEvent` 3.9MB。
 - 原因: `PullRequestEvent` の `payload.pull_request` が巨大。射影は `DS-001` 第2.2節に従う。
 - 制約: 1日換算は元日の1時間を24倍した単純換算であり、平日や時間帯による変動は未検証。複数日の実測は [Issue #14](https://github.com/xzyozi/gh-archive-lakehouse/issues/14) のBronzeロード時に行う。
-- 母集団件数に関する補足: 同じ1時間で `WatchEvent >= 3` のリポジトリは221件（Star対象5,760件中）。第4章の「日次で約1,000〜3,000件」は推定であり、未検証である（[Issue #15](https://github.com/xzyozi/gh-archive-lakehouse/issues/15)）。
+- 母集団件数に関する補足: 同じ1時間で `WatchEvent >= 3` のリポジトリは221件（Star対象5,760件中）。第4章の「日次で約1,000〜3,000件」は推定だった。複数日の実測では約4,300〜6,200件で、推定は過小だった（[`TEST-002`](./TEST-002_CHAOSSモデリング閾値の実データ検証報告書.md)）。
 
 ---
 
