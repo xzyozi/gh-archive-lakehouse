@@ -37,7 +37,7 @@ def execute_daily_ingestion(ds: str, **context: Any) -> dict[str, Any]:
         gcs_bucket_name=bucket_name,
     )
 
-    return {
+    result = {
         "target_date": summary.target_date.isoformat(),
         "gcs_uri": summary.gcs_uri,
         "total_events_extracted": summary.total_events_extracted,
@@ -47,14 +47,25 @@ def execute_daily_ingestion(ds: str, **context: Any) -> dict[str, Any]:
         "status": summary.status,
     }
 
+    # A partial day must not look like success: downstream aggregation would silently
+    # miss the failed hours. Failing here lets Airflow retry (the whole day is
+    # re-uploaded to the same object, so it stays idempotent). This also covers the
+    # last hour (23:00 UTC) not being published yet when the run starts at 00:00 UTC.
+    if summary.status != "SUCCESS":
+        raise RuntimeError(
+            f"Ingestion {summary.status} for {summary.target_date}: failed_hours={summary.failed_hours}"
+        )
+    return result
+
 
 default_args = {
     "owner": "octopulse",
     "depends_on_past": False,
     "email_on_failure": False,
     "email_on_retry": False,
-    "retries": 2,
-    "retry_delay": datetime.timedelta(minutes=5),
+    "retries": 3,
+    "retry_delay": datetime.timedelta(minutes=10),
+    "execution_timeout": datetime.timedelta(hours=1),
 }
 
 with DAG(

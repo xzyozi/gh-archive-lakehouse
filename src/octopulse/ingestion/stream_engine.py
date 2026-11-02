@@ -30,6 +30,7 @@ TARGET_EVENT_TYPES: frozenset[str] = frozenset(
 
 DEFAULT_USER_AGENT = "OctoPulse/0.1.0 (CHAOSS-compliant OSS Lakehouse; +https://github.com/xzyozi/gh-archive-lakehouse)"
 DEFAULT_CHUNK_SIZE = 65536  # 64KB buffer
+RETRY_BACKOFF_SECONDS: tuple[int, ...] = (5, 15, 45)  # DD-001 3.3
 
 
 def build_gh_archive_url(target_date: datetime.date, hour: int) -> str:
@@ -40,12 +41,50 @@ def build_gh_archive_url(target_date: datetime.date, hour: int) -> str:
     return f"https://data.gharchive.org/{date_str}-{hour}.json.gz"
 
 
+def _open_with_retry(req: urllib.request.Request, timeout: float, max_retries: int, max_404_retries: int) -> Any:
+    """Open the HTTP response, retrying only the connection phase (DD-001 3.3).
+
+    Retrying is limited to before the first byte is consumed. A retry after
+    streaming has started would feed a fresh gzip stream into a half-consumed
+    decompressor, so mid-stream failures are propagated to the caller instead.
+    """
+    url = req.full_url
+    retries = 0
+    retries_404 = 0
+    while True:
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                if retries_404 >= max_404_retries:
+                    logger.warning("GH Archive file not found (404): %s", url)
+                    raise
+                retries_404 += 1
+            elif exc.code >= 500 or exc.code == 429:
+                if retries >= max_retries:
+                    raise
+                retries += 1
+            else:
+                raise  # Other 4xx are not transient
+            wait_seconds = RETRY_BACKOFF_SECONDS[min(retries + retries_404 - 1, len(RETRY_BACKOFF_SECONDS) - 1)]
+            logger.warning("HTTP %d on %s. Retrying in %ds...", exc.code, url, wait_seconds)
+            time.sleep(wait_seconds)
+        except (urllib.error.URLError, TimeoutError) as exc:
+            if retries >= max_retries:
+                raise
+            retries += 1
+            wait_seconds = RETRY_BACKOFF_SECONDS[min(retries - 1, len(RETRY_BACKOFF_SECONDS) - 1)]
+            logger.warning("Network error on %s: %s. Retrying in %ds...", url, exc, wait_seconds)
+            time.sleep(wait_seconds)
+
+
 def fetch_hourly_stream(
     target_date: datetime.date,
     hour: int,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     max_retries: int = 3,
     timeout: float = 60.0,
+    max_404_retries: int = 2,
 ) -> Iterator[bytes]:
     """Fetch compressed byte chunks from GH Archive over HTTP stream.
 
@@ -53,11 +92,16 @@ def fetch_hourly_stream(
         target_date: The date to fetch.
         hour: The hour (0-23) to fetch.
         chunk_size: The byte chunk size for stream reading.
-        max_retries: Maximum retry attempts for transient errors.
+        max_retries: Maximum retries (after the first attempt) for 5xx/network errors.
         timeout: HTTP request timeout in seconds.
+        max_404_retries: Maximum retries for HTTP 404 (file not yet published).
 
     Yields:
         Byte chunks from the compressed HTTP response.
+
+    Raises:
+        urllib.error.HTTPError / URLError / TimeoutError: when the connection cannot be
+            established within the retry budget, or the connection drops mid-stream.
     """
     url = build_gh_archive_url(target_date, hour)
     req = urllib.request.Request(
@@ -68,27 +112,13 @@ def fetch_hourly_stream(
         },
     )
 
-    last_error: Exception | None = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            logger.info("Opening HTTP stream: %s (attempt %d/%d)", url, attempt, max_retries)
-            with urllib.request.urlopen(req, timeout=timeout) as response:
-                while True:
-                    chunk = response.read(chunk_size)
-                    if not chunk:
-                        break
-                    yield chunk
-            return
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
-            last_error = exc
-            if isinstance(exc, urllib.error.HTTPError) and exc.code == 404:
-                logger.warning("GH Archive file not found (404): %s", url)
-                raise
-            wait_seconds = 2**attempt
-            logger.warning("HTTP error on %s: %s. Retrying in %ds...", url, exc, wait_seconds)
-            time.sleep(wait_seconds)
-
-    raise RuntimeError(f"Failed to fetch {url} after {max_retries} attempts") from last_error
+    logger.info("Opening HTTP stream: %s", url)
+    with _open_with_retry(req, timeout, max_retries, max_404_retries) as response:
+        while True:
+            chunk = response.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
 
 
 def extract_target_events(
@@ -132,6 +162,11 @@ def extract_target_events(
             event_type = event.get("type")
             if event_type in TARGET_EVENT_TYPES:
                 yield event
+
+    # A stream that ends before the gzip trailer was a truncated transfer; silently
+    # accepting it would drop the rest of the hour while reporting SUCCESS.
+    if not decompressor.eof:
+        raise ValueError("Truncated gzip stream: input ended before the gzip trailer")
 
     # Flush any remaining decompressed data
     remaining_data = decompressor.flush()

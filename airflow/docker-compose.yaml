@@ -2,8 +2,7 @@ version: "3.8"
 
 x-airflow-common: &airflow-common
   image: apache/airflow:2.9.1-python3.11
-  environment:
-    &airflow-common-env
+  environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     AIRFLOW__CORE__FERNET_KEY: ""
@@ -20,7 +19,8 @@ x-airflow-common: &airflow-common
     - ./plugins:/opt/airflow/plugins
     - ../src:/opt/airflow/src:ro
     # Mount host Google Cloud ADC in read-only mode (No fixed key files)
-    - ~/.config/gcloud:/home/airflow/.config/gcloud:ro
+    # Override GCLOUD_CONFIG_DIR in .env when ADC lives elsewhere (e.g. Windows: %APPDATA%\gcloud)
+    - ${GCLOUD_CONFIG_DIR:-~/.config/gcloud}:/home/airflow/.config/gcloud:ro
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     postgres:
@@ -36,7 +36,7 @@ services:
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "airflow"]
+      test: [ "CMD", "pg_isready", "-U", "airflow" ]
       interval: 10s
       retries: 5
       start_period: 5s
@@ -50,15 +50,15 @@ services:
       _AIRFLOW_DB_MIGRATE: "true"
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-admin}
-      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:?Set _AIRFLOW_WWW_USER_PASSWORD in airflow/.env}IRFLOW_WWW_USER_PASSWORD in airflow/.env}
 
   airflow-webserver:
     <<: *airflow-common
     command: webserver
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      test: [ "CMD", "curl", "--fail", "http://localhost:8080/health" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -72,7 +72,7 @@ services:
     <<: *airflow-common
     command: scheduler
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      test: [ "CMD", "curl", "--fail", "http://localhost:8974/health" ]
       interval: 30s
       timeout: 10s
       retries: 5

@@ -9,6 +9,8 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import time
+import urllib.error
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -21,6 +23,9 @@ if TYPE_CHECKING:
     from google.cloud import storage
 
 logger = logging.getLogger(__name__)
+
+HOUR_MAX_RETRIES = 2  # whole-hour retries for mid-stream failures / truncated gzip
+HOUR_RETRY_WAIT_SECONDS = 15
 
 
 class TextWritable(Protocol):
@@ -54,6 +59,58 @@ def build_gcs_blob_path(target_date: datetime.date) -> str:
     return f"raw/{year}/{month}/{day}/events_{date_compact}.jsonl"
 
 
+def project_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a raw GH Archive event to the fields used downstream (DS-001 2.2).
+
+    The raw PullRequestEvent payload embeds the whole pull request (about 23KB per
+    event) and made one hour of output 312MB. Keeping only the fields below shrinks
+    it to about 5MB per hour, which keeps GCS/BigQuery inside the Always Free tier.
+    """
+    actor = event.get("actor") or {}
+    repo = event.get("repo") or {}
+    payload = event.get("payload") or {}
+    slim_payload: dict[str, Any] = {"action": payload.get("action")}
+    if event.get("type") == "PullRequestEvent":
+        slim_payload["merged"] = (payload.get("pull_request") or {}).get("merged")
+    return {
+        "id": event.get("id"),
+        "type": event.get("type"),
+        "actor": {"id": actor.get("id"), "login": actor.get("login")},
+        "repo": {"id": repo.get("id"), "name": repo.get("name")},
+        "payload": slim_payload,
+        "public": event.get("public"),
+        "created_at": event.get("created_at"),
+    }
+
+
+def _collect_hour_lines(target_date: datetime.date, hour: int) -> list[str]:
+    """Fetch one hour and return its JSONL lines, retrying the whole hour on failure.
+
+    The hour is retried from scratch (new HTTP stream and new decompressor), because
+    resuming a half-consumed gzip stream is not possible. A 404 is not retried here:
+    the connection layer already retried it (DD-001 3.3).
+    """
+    attempt = 0
+    while True:
+        try:
+            byte_stream = fetch_hourly_stream(target_date, hour)
+            return [
+                json.dumps(project_event(event), ensure_ascii=False) + "\n"
+                for event in extract_target_events(byte_stream)
+            ]
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise
+            error: Exception = exc
+        except Exception as exc:
+            error = exc
+        attempt += 1
+        if attempt > HOUR_MAX_RETRIES:
+            raise error
+        logger.warning("  Hour %02d attempt %d failed: %s. Retrying the hour...", hour, attempt, error)
+        time.sleep(HOUR_RETRY_WAIT_SECONDS)
+
+
 def run_daily_ingestion_to_writer(
     target_date: datetime.date,
     writer: TextWritable,
@@ -83,20 +140,20 @@ def run_daily_ingestion_to_writer(
 
     for hour in hours:
         try:
-            byte_stream = fetch_hourly_stream(target_date, hour)
-            hourly_event_count = 0
-            for event in extract_target_events(byte_stream):
-                line = json.dumps(event, ensure_ascii=False) + "\n"
-                bytes_written = writer.write(line)
-                total_bytes += bytes_written if bytes_written is not None else len(line.encode("utf-8"))
-                hourly_event_count += 1
-
-            total_events += hourly_event_count
-            processed_hours.append(hour)
-            logger.info("  Hour %02d: Extracted %d target events", hour, hourly_event_count)
+            lines = _collect_hour_lines(target_date, hour)
         except Exception as exc:
             logger.warning("  Hour %02d failed: %s", hour, exc)
             failed_hours.append(hour)
+            continue
+
+        # Write only after the whole hour was extracted successfully, so a failed
+        # hour never leaves partial or duplicated rows in the destination.
+        for line in lines:
+            writer.write(line)
+            total_bytes += len(line.encode("utf-8"))
+        total_events += len(lines)
+        processed_hours.append(hour)
+        logger.info("  Hour %02d: Extracted %d target events", hour, len(lines))
 
     if not processed_hours:
         status = "FAILED"

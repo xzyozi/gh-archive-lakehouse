@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from octopulse.ingestion.gcs_uploader import (
     build_gcs_blob_path,
+    project_event,
     run_daily_ingestion_to_writer,
 )
 
@@ -54,9 +55,10 @@ class TestGCSUploader(unittest.TestCase):
         self.assertEqual(first_event["id"], "101")
         self.assertEqual(first_event["type"], "WatchEvent")
 
+    @patch("octopulse.ingestion.gcs_uploader.time.sleep")
     @patch("octopulse.ingestion.gcs_uploader.extract_target_events")
     @patch("octopulse.ingestion.gcs_uploader.fetch_hourly_stream")
-    def test_run_daily_ingestion_partial_failure(self, mock_fetch, mock_extract):
+    def test_run_daily_ingestion_partial_failure(self, mock_fetch, mock_extract, _mock_sleep):
         """Verify handling when some hours fail."""
         def side_effect(date, hour):
             if hour == 1:
@@ -80,3 +82,76 @@ class TestGCSUploader(unittest.TestCase):
         self.assertEqual(summary.total_events_extracted, 1)
         self.assertEqual(summary.processed_hours, [0])
         self.assertEqual(summary.failed_hours, [1])
+
+    @patch("octopulse.ingestion.gcs_uploader.time.sleep")
+    @patch("octopulse.ingestion.gcs_uploader.extract_target_events")
+    @patch("octopulse.ingestion.gcs_uploader.fetch_hourly_stream")
+    def test_failed_hour_is_retried_without_duplicate_rows(self, mock_fetch, mock_extract, _mock_sleep):
+        """A mid-stream failure must retry the whole hour and write each row once."""
+        mock_fetch.return_value = [b"chunk"]
+        calls = {"n": 0}
+
+        def flaky_extract(_stream):
+            calls["n"] += 1
+            yield {"id": "1", "type": "WatchEvent", "repo": {"name": "a/b"}}
+            if calls["n"] == 1:
+                raise ValueError("Truncated gzip stream")
+            yield {"id": "2", "type": "ForkEvent", "repo": {"name": "a/b"}}
+
+        mock_extract.side_effect = flaky_extract
+
+        buffer = io.StringIO()
+        summary = run_daily_ingestion_to_writer(
+            target_date=datetime.date(2026, 11, 1),
+            writer=buffer,
+            destination_uri="gs://b/raw/x.jsonl",
+            hours=[0],
+        )
+
+        ids = [json.loads(line)["id"] for line in buffer.getvalue().splitlines() if line]
+        self.assertEqual(summary.status, "SUCCESS")
+        self.assertEqual(ids, ["1", "2"])
+
+    @patch("octopulse.ingestion.gcs_uploader.time.sleep")
+    @patch("octopulse.ingestion.gcs_uploader.extract_target_events")
+    @patch("octopulse.ingestion.gcs_uploader.fetch_hourly_stream")
+    def test_exhausted_retries_leave_no_partial_rows(self, mock_fetch, mock_extract, _mock_sleep):
+        """If every attempt fails, nothing from that hour is written."""
+        mock_fetch.return_value = [b"chunk"]
+
+        def always_broken(_stream):
+            yield {"id": "1", "type": "WatchEvent", "repo": {"name": "a/b"}}
+            raise ValueError("Truncated gzip stream")
+
+        mock_extract.side_effect = always_broken
+
+        buffer = io.StringIO()
+        summary = run_daily_ingestion_to_writer(
+            target_date=datetime.date(2026, 11, 1),
+            writer=buffer,
+            destination_uri="gs://b/raw/x.jsonl",
+            hours=[0],
+        )
+
+        self.assertEqual(summary.status, "FAILED")
+        self.assertEqual(summary.failed_hours, [0])
+        self.assertEqual(buffer.getvalue(), "")
+
+    def test_project_event_drops_heavy_payload(self):
+        """Only the fields used downstream are kept (DS-001 2.2)."""
+        raw = {
+            "id": "9",
+            "type": "PullRequestEvent",
+            "actor": {"id": 1, "login": "octocat", "avatar_url": "x"},
+            "repo": {"id": 2, "name": "o/r", "url": "y"},
+            "payload": {"action": "closed", "pull_request": {"merged": True, "body": "z" * 20000}},
+            "public": True,
+            "created_at": "2026-11-01T00:00:00Z",
+        }
+
+        slim = project_event(raw)
+
+        self.assertEqual(slim["payload"], {"action": "closed", "merged": True})
+        self.assertEqual(slim["actor"], {"id": 1, "login": "octocat"})
+        self.assertEqual(slim["repo"], {"id": 2, "name": "o/r"})
+        self.assertLess(len(json.dumps(slim)), 500)
