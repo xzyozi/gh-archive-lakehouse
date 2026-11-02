@@ -37,8 +37,7 @@ exclude = [
     "etc",
     "old",
     "venv",
-    ".venv",
-    "tests" # Exclude tests folder from linting for now, as it might have specific test patterns
+    ".venv"
 ]
 
 [tool.ruff.lint]
@@ -47,13 +46,12 @@ select = ["E", "F", "W", "I"]
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]
-"app/tool/__init__.py" = ["F401"]
-"run.py" = ["E402"]
-"tool/model_manager_gui.py" = ["E402"]
+# scripts/ は src/ を sys.path に追加してから import するため E402 を許可する
+"scripts/*.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 # 自分のプロジェクトのパッケージ名を指定（自動ソート時にローカルパッケージとして認識させるため）
-known-first-party = ["app"]
+known-first-party = ["octopulse"]
 force-sort-within-sections = true
 
 # ==========================================
@@ -83,14 +81,6 @@ exclude = [
     "etc/",
     "old/"
 ]
-
-[[tool.mypy.overrides]]
-module = "app.tool.*"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "app.db.db_session_manager"
-ignore_errors = true
 
 # ==========================================
 # Testing (Pytest)
