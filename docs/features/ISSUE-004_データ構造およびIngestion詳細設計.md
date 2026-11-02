@@ -3,7 +3,7 @@ title: "課題記録: データ構造およびIngestion詳細設計"
 document_type: "issue_record"
 document_role: "reference"
 ssot_scope: "issue_record"
-status: "draft"
+status: "approved"
 version: "1.0"
 created_at: "2026-11-01"
 updated_at: "2026-11-01"
@@ -26,7 +26,7 @@ related_documents:
 | :----------- | :----------------------------------------------------------------------- |
 | Issue番号    | #4                                                                       |
 | Issue URL    | https://github.com/xzyozi/gh-archive-lakehouse/issues/4                  |
-| 状態         | Open                                                                     |
+| 状態         | Closed (PR #5 にてマージ完了)                            |
 | 作成者       | xzyozi                                                                   |
 | 担当者       | xzyozi                                                                   |
 | 記録日時     | 2026-11-01                                                               |
@@ -49,8 +49,8 @@ related_documents:
 - **決定事項**:
   - `DS-001_データ構造仕様書.md`: GCSおよびBigQuery Bronze/Silverの物理スキーマを定義。Gold層はカラム定義枠のみ示し、計算ロジックは実データ検証フェーズへ委譲。
   - `DD-001_Ingestionエンジン詳細設計書.md`: Python標準 `urllib.request` / `zlib` を活用したゼロディスクI/OストリーミングパイプラインとDTO、エラーハンドリングを定義。
-- **対応状況**: 対応中
-- **次のアクション**: `DS-001` および `DD-001` の作成とPR作成。
+- **対応状況**: 対応済み (PR #5 にて制定完了)
+- **次のアクション**: なし（詳細設計制定完了）
 
 ## 3. 関連文書
 

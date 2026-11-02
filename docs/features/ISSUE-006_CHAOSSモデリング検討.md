@@ -4,7 +4,7 @@ document_type: "issue_record"
 document_role: "reference"
 ssot_scope: "issue_record"
 status: "draft"
-version: "1.0"
+version: "1.1"
 created_at: "2026-11-01"
 updated_at: "2026-11-01"
 author: "xzyozi"
@@ -21,15 +21,15 @@ related_documents:
 # 課題記録
 **[Modeling] CHAOSS 2軸評価モデル（計算ロジック・足切り閾値）の策定**
 
-| 項目         | 内容                                                                     |
-| :----------- | :----------------------------------------------------------------------- |
-| Issue番号    | #6                                                                       |
-| Issue URL    | https://github.com/xzyozi/gh-archive-lakehouse/issues/6                  |
-| 状態         | Open (壁打ちプール中)                                                    |
-| 作成者       | xzyozi                                                                   |
-| 担当者       | xzyozi                                                                   |
-| 記録日時     | 2026-11-01                                                               |
-| 最終確認日時 | 2026-11-01                                                               |
+| 項目         | 内容                                                           |
+| :----------- | :------------------------------------------------------------- |
+| Issue番号    | #6                                                             |
+| Issue URL    | https://github.com/xzyozi/gh-archive-lakehouse/issues/6        |
+| 状態         | Open (暫定値を反映済み。実データでの再検証は Issue #15 で実施) |
+| 作成者       | xzyozi                                                         |
+| 担当者       | xzyozi                                                         |
+| 記録日時     | 2026-11-01                                                     |
+| 最終確認日時 | 2026-11-01                                                     |
 
 ## 1. 検討論点と検証データからの示唆
 
@@ -37,12 +37,23 @@ related_documents:
    - `TEST-001` の結果より、1時間で活動のあったユニークリポジトリ約7,000件のうち、大半が単発1件のイベント。
    - 日次換算で「WatchEvent >= 3 かつ (Fork+Issue+PR) >= 1」を設けることで、約1,000〜3,000件の有望リポジトリ群に絞り込めると判明。
 2. **Attention Velocity (X軸)**:
-   - 日次新規Star獲得数のパーセンタイル、または直近7日移動平均。
+   - 日次新規Star獲得数のパーセンタイル順位（`PERCENT_RANK() OVER (PARTITION BY target_date ORDER BY daily_stars ASC)`）。
 3. **Engagement Depth (Y軸)**:
-   - PRがForkの7倍発生するため、発生頻度を考慮した加重（Fork * 2 + Issue * 1 + PR * 1 等）が有効。
-4. **スパム・ボット検知フラグ**:
-   - テスト自動化ボット（PR 300件超・Star 0件）を排除するためのフラグ設計が必要。
+   - PRがForkの約7倍発生するため、発生頻度を考慮した加重複合スコア `(daily_forks * 3) + (daily_prs * 2) + (daily_issues * 1)` のパーセンタイル順位を採用。
+4. **4象限セグメンテーション（Cutoff）**:
+   - 上位20%（パーセンタイル >= 0.80）を境界値とし、Hyper-Growth, Viral Spotlight, Silent Utility, Niche に分類。
+5. **スパム・ボット検知フラグ**:
+   - `is_suspicious_star_surge`: `daily_stars >= 10 AND (daily_forks + daily_prs) = 0`
+   - `is_bot_generated_prs`: `daily_prs >= 50 AND daily_stars = 0`（`mergifyio-testing` 等のテスト自動化ボット除外用）
+   - `is_newborn_buzz`: `repo_age_days <= 7 AND daily_stars >= 10`
 
-## 2. 次のアクション
+## 2. 決定事項および対応状況
 
-- 本検証結果を元に、ユーザーとの最終壁打ちを行い、dbtモデル実装時にロジックを確定する。
+- **決定事項**: 上記を `DS-001_データ構造仕様書.md` 第2.6節へ**暫定値**として反映した。
+- **未検証の点**（根拠データは2024-01-01の1時間分のみ。Bronzeへの複数日ロードと分布集計は未実施）:
+  - 日次の母集団件数（「約1,000〜3,000件」は推定。同じ1時間で `Watch >= 3` のリポジトリは221件）。
+  - `PERCENT_RANK` の同順位（母集団の大半が `daily_stars` 3〜5付近になる見込み）と、0.80境界の安定性。
+  - 加重の選定理由（候補 `PR3:Issue2:Fork1` から `Fork3:PR2:Issue1` に変わった理由が未記録）。
+  - `is_bot_generated_prs` は足切り（`daily_stars >= 3`）後の母集団内では常に偽になる。フラグは足切り前に評価する（DS-001 第2.6節⑤）。
+- **対応状況**: 暫定反映済み（DS-001 Rev.1.2）。確定は [Issue #15](https://github.com/xzyozi/gh-archive-lakehouse/issues/15) の再検証後。
+- **次のアクション**: Issue #15 で確定するまで、dbt Gold モデルの閾値実装は行わない。
