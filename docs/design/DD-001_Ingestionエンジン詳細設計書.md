@@ -5,12 +5,12 @@ document_number: "OCTO-DD-001"
 document_role: "normative"
 ssot_scope: "module_behavior"
 status: "draft"
-version: "1.2"
+version: "1.3"
 created_at: "2026-11-01"
 updated_at: "2026-11-02"
 author: "xzyozi"
 owner: "xzyozi"
-purpose: "GH Archiveからのインフライトストリーミング解凍・4大イベント抽出、およびGCSゼロディスクI/Oアップロード処理の制御仕様とDTO契約を定義するため"
+purpose: "GH Archiveからのインフライトストリーミング解凍・4大イベントおよびリポジトリ作成イベントの抽出、およびGCSゼロディスクI/Oアップロード処理の制御仕様とDTO契約を定義するため"
 related_documents:
   - "ドキュメントガバナンス（相対パス: ../README.md）"
   - "用語集（相対パス: ../../CONTEXT.md）"
@@ -72,15 +72,16 @@ related_documents:
 | `hours`           | `list[int]`      |  任意  |   可   | `None`       | 処理対象時間リスト（未指定時は `0..23` の全24時間） |
 
 ##### 出力 DTO スキーマ・戻り値仕様
-| フィールド               | データ型        | 必須性 | NULL可 | 正常時の意味・制約                       |
-| :----------------------- | :-------------- | :----: | :----: | :--------------------------------------- |
-| `target_date`            | `datetime.date` |  必須  |  不可  | 処理完了対象日                           |
-| `gcs_uri`                | `str`           |  必須  |  不可  | 出力先GCSオブジェクトパス                |
-| `total_events_extracted` | `int`           |  必須  |  不可  | 抽出された4イベント総数（>= 0）          |
-| `total_bytes_uploaded`   | `int`           |  必須  |  不可  | GCSアップロード総バイト数                |
-| `processed_hours`        | `list[int]`     |  必須  |  不可  | 正常処理された時間リスト（0〜23）        |
-| `failed_hours`           | `list[int]`     |  必須  |  不可  | 欠落・取得失敗した時間リスト             |
-| `status`                 | `str`           |  必須  |  不可  | `SUCCESS` / `PARTIAL_SUCCESS` / `FAILED` |
+| フィールド               | データ型        | 必須性 | NULL可 | 正常時の意味・制約                                                                                     |
+| :----------------------- | :-------------- | :----: | :----: | :----------------------------------------------------------------------------------------------------- |
+| `target_date`            | `datetime.date` |  必須  |  不可  | 処理完了対象日                                                                                         |
+| `gcs_uri`                | `str`           |  必須  |  不可  | 出力先GCSオブジェクトパス                                                                              |
+| `total_events_extracted` | `int`           |  必須  |  不可  | 出力された抽出イベント総数（>= 0）。REQUIRED欠落でスキップしたイベントは含まない                       |
+| `total_bytes_uploaded`   | `int`           |  必須  |  不可  | GCSアップロード総バイト数                                                                              |
+| `processed_hours`        | `list[int]`     |  必須  |  不可  | 正常処理された時間リスト（0〜23）                                                                      |
+| `failed_hours`           | `list[int]`     |  必須  |  不可  | 欠落・取得失敗した時間リスト                                                                           |
+| `status`                 | `str`           |  必須  |  不可  | `SUCCESS` / `PARTIAL_SUCCESS` / `FAILED`                                                               |
+| `skipped_events`         | `int`           |  必須  |  不可  | REQUIRED列の欠落でスキップしたイベント数（>= 0）。デフォルト `0` の末尾フィールド。Warningログにも出す |
 
 ---
 
@@ -106,21 +107,23 @@ related_documents:
 - **処理規約**:
   - `byte_stream` を受け取り、`zlib.decompressobj(wbits=31)` を用いてチャンク単位でインフライト解凍する。
   - 行区切り（`\n`）でバッファリングし、完全な行になったJSON文字列をパースする。
-  - `type` が対象4種（`WatchEvent`, `ForkEvent`, `IssuesEvent`, `PullRequestEvent`）に合致する場合のみ `yield` する。
+  - 判定関数 `is_target_event` が真の場合のみ `yield` する。対象は、`type` が4種（`WatchEvent`, `ForkEvent`, `IssuesEvent`, `PullRequestEvent`。定数 `TARGET_EVENT_TYPES`）のいずれか、または `CreateEvent` で `payload.ref_type == "repository"`（リポジトリ作成）のもの。ブランチ・タグの `CreateEvent` は `yield` しない。
   - 不正・破損行による `JSONDecodeError` はログに警告記録してスキップし、パイプラインを停止させない。
   - 入力が gzip トレイラーの前に終了した場合（転送途中の切断）は `ValueError` を送出する。欠落したまま正常終了させない。
 
 ---
 
-#### ④ 機能ID: `F-ING-006` `project_event`（出力項目の射影）
+#### ④ 機能ID: `F-ING-006` `project_event`（Bronze形式へのフラット化と射影）
 
 - **関数識別名**: `project_event`
 - **引数**: `event: dict[str, Any]`（GH Archiveの生イベント）
-- **戻り値**: `dict[str, Any]`（`DS-001` 第2.2節のフィールドのみを持つイベント）
+- **戻り値**: `dict[str, Any] | None`（`DS-001` 第2.2節のフラット形式の行。REQUIRED列が欠けている場合は `None`）
 - **処理規約**:
-  - `id`, `type`, `actor.{id,login}`, `repo.{id,name}`, `public`, `created_at` と、`payload.action` を残す。
-  - `PullRequestEvent` のみ `payload.pull_request.merged` を `payload.merged` として残す。
-  - 上記以外のフィールドは出力しない（`PullRequestEvent` の `payload.pull_request` は1件約23KBあり、全量出力は1時間312MBになるため）。欠けているフィールドは `null` とし、例外を送出しない。
+  - 出力キーは Bronze `stg_github_events`（`DS-001` 第2.3節）と1対1の `id`, `type`, `actor_login`, `repo_id`, `repo_name`, `payload`, `created_at`, `event_date` とする。`actor.login` → `actor_login`、`repo.id` → `repo_id`、`repo.name` → `repo_name` にフラット化する。
+  - `event_date` は `created_at` の日付部分（`YYYY-MM-DD`）とする。
+  - `payload` は `{"action": ...}` を残す。`PullRequestEvent` のみ `payload.pull_request.merged` を `merged` として、`CreateEvent` のみ `ref_type`（`"repository"`）を加える。
+  - `actor.id` と `public` は出力しない（Bronzeに列がなく、下流で使わない）。`payload` のその他のフィールドも出力しない（`PullRequestEvent` の `payload.pull_request` は1件約23KBあり、全量出力は1時間312MBになるため）。
+  - REQUIRED列（`id`, `type`, `actor_login`, `repo_name`, `created_at`）のいずれかが欠落・空、または `created_at` の日付部分が解釈できない場合は `None` を返す。呼び出し側（`_collect_hour_lines`）はその行を出力せずスキップ件数に加える。1件でも欠けた行があるとBigQueryのロードジョブ全体が失敗するためである。`repo_id` は NULLABLE のため、欠落時は `null` とする。例外は送出しない。
 
 ---
 
@@ -145,8 +148,8 @@ sequenceDiagram
             loop 受信チャンク単位
                 GHA -->> Engine: gzip 圧縮バイト列
                 Engine ->> Engine: zlib インフライト解凍
-                Engine ->> Engine: 4イベント判定 - Watch, Fork, Issue, PR
-                Engine ->> Engine: 項目を射影し 1時間分をメモリに蓄積
+                Engine ->> Engine: 対象判定 - Watch, Fork, Issue, PR, リポジトリ作成
+                Engine ->> Engine: Bronze形式にフラット化し 欠落行は除外して 1時間分をメモリに蓄積
             end
             Engine ->> GCS: 1時間分を成功時のみ書き込み
         else HTTP 404 または 5xx 欠落
@@ -168,26 +171,27 @@ sequenceDiagram
 2. **GCSストリーミングアップロード**:
    - `google.cloud.storage.Blob.open("w")` を使用し、1時間分を抽出・射影し終えた後に、その時間の行をGCSライターへ書き込む。
    - 失敗した時間の行は書き込まない。これにより、再試行時に部分書き込みや重複行が残らない。
-   - メモリ使用量は、解凍バッファに加えて、1時間分の射影済み行（実測で約6MB。`2024-01-01-15`、23,911件）を保持する。射影しない場合は312MBになるため、射影が前提である。NFR-003（512MB以下）を満たす。
+   - メモリ使用量は、解凍バッファに加えて、1時間分の射影済み行（実測で約5.6〜5.7MB。`2024-01-03-0` / `-23`、約22,500〜22,900件。`TEST-003`）を保持する。射影しない場合は312MBになるため、射影が前提である。NFR-003（512MB以下）を満たす。
 
 ---
 
 ### 3.3 エラーハンドリング・リトライ制御
 
-| 発生事象                                    | 原因                         | 対処方針・制御規約                                                                                                                                                                                     |
-| :------------------------------------------ | :--------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **HTTP 5xx / 429 / 接続失敗**               | GH Archive一時障害           | 接続確立時のみ、最大3回リトライ（待機: 5s, 15s, 45s）。その他の4xx（404を除く）は再試行しない。                                                                                                        |
-| **HTTP 404**                                | 未生成・アーカイブ欠落       | 接続確立時に2回リトライ（待機: 5s, 15s）し、なお404なら欠落時間として `failed_hours` に記録し、次時間へ継続。                                                                                          |
-| **転送途中の切断 / gzip切れ**               | ネットワーク断、不完全な転送 | ストリーム開始後はその接続内でリトライしない（解凍状態が壊れるため）。その時間を新しい接続・新しい解凍器で最初から最大2回再試行（待機: 15s）。それでも失敗した時間は書き込まず `failed_hours` に記録。 |
-| **日次結果が `PARTIAL_SUCCESS` / `FAILED`** | 上記で時間が欠落             | Airflow DAG はタスクを失敗扱いにする（retries=3、間隔10分）。再実行は同一オブジェクトの上書きで冪等。0:00 UTC 直後の23時台ファイル未公開もこの再実行で吸収する。                                       |
-| **JSONDecodeError**                         | 不正文字・破損行             | 破損行をWarningログに記録し破棄。次行のパースへ進む。                                                                                                                                                  |
-| **GCS書き込みエラー**                       | GCP認証切れ・権限不足        | 即時例外送出（Fatal）。Airflowタスクを失敗させて通知。                                                                                                                                                 |
+| 発生事象                                    | 原因                                                                  | 対処方針・制御規約                                                                                                                                                                                     |
+| :------------------------------------------ | :-------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **HTTP 5xx / 429 / 接続失敗**               | GH Archive一時障害                                                    | 接続確立時のみ、最大3回リトライ（待機: 5s, 15s, 45s）。その他の4xx（404を除く）は再試行しない。                                                                                                        |
+| **HTTP 404**                                | 未生成・アーカイブ欠落                                                | 接続確立時に2回リトライ（待機: 5s, 15s）し、なお404なら欠落時間として `failed_hours` に記録し、次時間へ継続。                                                                                          |
+| **転送途中の切断 / gzip切れ**               | ネットワーク断、不完全な転送                                          | ストリーム開始後はその接続内でリトライしない（解凍状態が壊れるため）。その時間を新しい接続・新しい解凍器で最初から最大2回再試行（待機: 15s）。それでも失敗した時間は書き込まず `failed_hours` に記録。 |
+| **日次結果が `PARTIAL_SUCCESS` / `FAILED`** | 上記で時間が欠落                                                      | Airflow DAG はタスクを失敗扱いにする（retries=3、間隔10分）。再実行は同一オブジェクトの上書きで冪等。0:00 UTC 直後の23時台ファイル未公開もこの再実行で吸収する。                                       |
+| **REQUIRED列の欠落**                        | イベントに `id` / `actor.login` / `repo.name` / `created_at` 等が無い | `project_event` が `None` を返したイベントは出力せずスキップし、`skipped_events` に集計してWarningログに出す。ロードジョブ全体の失敗を防ぐ。時間の成否（`failed_hours`）には影響しない。               |
+| **JSONDecodeError**                         | 不正文字・破損行                                                      | 破損行をWarningログに記録し破棄。次行のパースへ進む。                                                                                                                                                  |
+| **GCS書き込みエラー**                       | GCP認証切れ・権限不足                                                 | 即時例外送出（Fatal）。Airflowタスクを失敗させて通知。                                                                                                                                                 |
 
 ---
 
 ## 4. 変更管理方針
 
-- 抽出対象イベントを追加する場合は、`extract_target_events` 内の判定リスト（Set）を更新し、対応するBigQuery Bronze層への影響を確認する。
+- 抽出対象イベントを追加する場合は、判定関数 `is_target_event`（および `TARGET_EVENT_TYPES`）を更新し、対応するBigQuery Bronze層への影響を確認する。`BD-001` 第4章に従いADRを起票する（例: [`ADR-002`](../adr/002-ingest-repository-create-event.md)）。
 - ストリーミング解討ロジックの変更時は、メモリ使用量プロファイリング（`tracemalloc` 等）による検証を必須とする。
 
 ---
@@ -205,8 +209,9 @@ sequenceDiagram
 
 ## 6. 改訂履歴 (Change Log)
 
-| 版数    | 改訂日     | 変更者       | 変更内容・変更理由 (Why)                                                                                                                                                                   |
-| :------ | :--------- | :----------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Rev.1.0 | 2026-11-01 | xzyozi       | 新規作成（初版制定: Issue #4 対応）                                                                                                                                                        |
-| Rev.1.1 | 2026-11-01 | xzyozi       | 実装(gcs_uploader.py)に合わせて run_daily_ingestion の引数(storage_client, hours)および run_daily_ingestion_to_writer 契約を追加・同期（Issue #11 対応）                                   |
-| Rev.1.2 | 2026-11-02 | レビュー反映 | `project_event`（F-ING-006）追加、リトライ制御を実装と同期（接続確立時のみ・1時間単位の再試行・切れたgzipの検出・部分成功時のDAG失敗）、1時間分のメモリ保持を明記（Issue #9 の修正と対応） |
+| 版数    | 改訂日     | 変更者       | 変更内容・変更理由 (Why)                                                                                                                                                                                                             |
+| :------ | :--------- | :----------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rev.1.0 | 2026-11-01 | xzyozi       | 新規作成（初版制定: Issue #4 対応）                                                                                                                                                                                                  |
+| Rev.1.1 | 2026-11-01 | xzyozi       | 実装(gcs_uploader.py)に合わせて run_daily_ingestion の引数(storage_client, hours)および run_daily_ingestion_to_writer 契約を追加・同期（Issue #11 対応）                                                                             |
+| Rev.1.2 | 2026-11-02 | レビュー反映 | `project_event`（F-ING-006）追加、リトライ制御を実装と同期（接続確立時のみ・1時間単位の再試行・切れたgzipの検出・部分成功時のDAG失敗）、1時間分のメモリ保持を明記（Issue #9 の修正と対応）                                           |
+| Rev.1.3 | 2026-11-02 | レビュー反映 | `project_event`（F-ING-006）をBronze形式のフラット出力（`event_date` 付与、REQUIRED欠落時は `None`）に変更。`IngestionSummaryDTO` に `skipped_events` を追加。抽出対象に `CreateEvent`（リポジトリ作成）を追加（Issue #14、ADR-002） |
