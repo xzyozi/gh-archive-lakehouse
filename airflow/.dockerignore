@@ -1,0 +1,9 @@
+# 秘密情報・実行時生成物をビルドコンテキストに含めない
+.env
+.env.*
+!.env.example
+logs/
+**/__pycache__/
+*.py[cod]
+.git
+.gitignore
