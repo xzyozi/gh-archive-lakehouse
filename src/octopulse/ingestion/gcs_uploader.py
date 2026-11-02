@@ -6,13 +6,13 @@ without intermediate local file writes, conforming to DD-001 and DS-001.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import datetime
 import json
 import logging
 import time
-import urllib.error
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
+import urllib.error
 
 from octopulse.ingestion.stream_engine import (
     extract_target_events,

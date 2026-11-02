@@ -4,8 +4,8 @@ import datetime
 import gzip
 import json
 import unittest
-import urllib.error
 from unittest.mock import MagicMock, patch
+import urllib.error
 
 from octopulse.ingestion.stream_engine import (
     TARGET_EVENT_TYPES,

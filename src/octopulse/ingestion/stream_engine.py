@@ -7,15 +7,15 @@ Fork, Issues, PullRequest) without writing any temporary files to disk.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import datetime
 import json
 import logging
 import time
+from typing import Any
 import urllib.error
 import urllib.request
 import zlib
-from collections.abc import Iterator
-from typing import Any
 
 logger = logging.getLogger(__name__)
 

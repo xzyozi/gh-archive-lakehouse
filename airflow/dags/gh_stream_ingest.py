@@ -10,8 +10,9 @@ import datetime
 import os
 from typing import Any
 
-from airflow import DAG
 from airflow.operators.python import PythonOperator
+
+from airflow import DAG
 
 # Default bucket name from environment variable
 GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "octopulse-data-lake")
