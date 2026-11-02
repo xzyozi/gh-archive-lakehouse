@@ -9,6 +9,7 @@ from octopulse.ingestion.gcs_uploader import (
 from octopulse.ingestion.stream_engine import (
     extract_target_events,
     fetch_hourly_stream,
+    is_target_event,
     stream_gh_archive_hour,
 )
 
@@ -17,6 +18,7 @@ __all__ = [
     "build_gcs_blob_path",
     "extract_target_events",
     "fetch_hourly_stream",
+    "is_target_event",
     "run_daily_ingestion",
     "run_daily_ingestion_to_writer",
     "stream_gh_archive_hour",

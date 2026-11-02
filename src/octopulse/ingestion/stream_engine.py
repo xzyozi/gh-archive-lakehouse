@@ -2,7 +2,7 @@
 
 This module handles streaming HTTP downloads of GH Archive (.json.gz) files,
 on-the-fly decompression using zlib, and extraction of target events (Watch,
-Fork, Issues, PullRequest) without writing any temporary files to disk.
+Fork, Issues, PullRequest, and repository-creating CreateEvent) without writing any temporary files to disk.
 """
 
 from __future__ import annotations
@@ -28,9 +28,28 @@ TARGET_EVENT_TYPES: frozenset[str] = frozenset(
     }
 )
 
+REPOSITORY_CREATE_EVENT_TYPE = "CreateEvent"
+REPOSITORY_REF_TYPE = "repository"
+
 DEFAULT_USER_AGENT = "OctoPulse/0.1.0 (CHAOSS-compliant OSS Lakehouse; +https://github.com/xzyozi/gh-archive-lakehouse)"
 DEFAULT_CHUNK_SIZE = 65536  # 64KB buffer
 RETRY_BACKOFF_SECONDS: tuple[int, ...] = (5, 15, 45)  # DD-001 3.3
+
+
+def is_target_event(event: dict[str, Any]) -> bool:
+    """Return True if the event is an extraction target.
+
+    Targets are the 4 types in TARGET_EVENT_TYPES plus CreateEvent whose
+    payload.ref_type is "repository" (used to derive repo_age_days). Branch and
+    tag CreateEvents are excluded because they are high volume and unused.
+    """
+    event_type = event.get("type")
+    if event_type in TARGET_EVENT_TYPES:
+        return True
+    if event_type == REPOSITORY_CREATE_EVENT_TYPE:
+        payload = event.get("payload")
+        return isinstance(payload, dict) and payload.get("ref_type") == REPOSITORY_REF_TYPE
+    return False
 
 
 def build_gh_archive_url(target_date: datetime.date, hour: int) -> str:
@@ -159,8 +178,7 @@ def extract_target_events(
                 logger.debug("Skipping malformed JSON line: %s", err)
                 continue
 
-            event_type = event.get("type")
-            if event_type in TARGET_EVENT_TYPES:
+            if isinstance(event, dict) and is_target_event(event):
                 yield event
 
     # A stream that ends before the gzip trailer was a truncated transfer; silently
@@ -176,7 +194,7 @@ def extract_target_events(
     if buffer.strip():
         try:
             event = json.loads(buffer.strip().decode("utf-8"))
-            if event.get("type") in TARGET_EVENT_TYPES:
+            if isinstance(event, dict) and is_target_event(event):
                 yield event
         except (json.JSONDecodeError, UnicodeDecodeError):
             pass

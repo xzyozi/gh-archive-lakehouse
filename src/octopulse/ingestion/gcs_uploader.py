@@ -45,6 +45,7 @@ class IngestionSummaryDTO:
     processed_hours: list[int] = field(default_factory=list)
     failed_hours: list[int] = field(default_factory=list)
     status: str = "SUCCESS"  # SUCCESS, PARTIAL_SUCCESS, FAILED
+    skipped_events: int = 0  # events dropped because a REQUIRED column was missing
 
 
 def build_gcs_blob_path(target_date: datetime.date) -> str:
@@ -59,45 +60,80 @@ def build_gcs_blob_path(target_date: datetime.date) -> str:
     return f"raw/{year}/{month}/{day}/events_{date_compact}.jsonl"
 
 
-def project_event(event: dict[str, Any]) -> dict[str, Any]:
-    """Reduce a raw GH Archive event to the fields used downstream (DS-001 2.2).
+def _non_empty_str(value: Any) -> str | None:
+    """Return the value if it is a non-empty string, otherwise None."""
+    return value if isinstance(value, str) and value else None
 
-    The raw PullRequestEvent payload embeds the whole pull request (about 23KB per
-    event) and made one hour of output 312MB. Keeping only the fields below shrinks
-    it to about 5MB per hour, which keeps GCS/BigQuery inside the Always Free tier.
+
+def project_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    """Flatten a raw GH Archive event into a Bronze row (DS-001 2.2 / 2.3).
+
+    The output keys match the BigQuery Bronze table ``stg_github_events`` one to
+    one, so a load job can ingest the JSONL as is. The raw PullRequestEvent payload
+    embeds the whole pull request (about 23KB per event); keeping only the
+    projected payload keeps GCS/BigQuery inside the Always Free tier.
+
+    Returns None when a REQUIRED column (id, type, actor_login, repo_name,
+    created_at) is missing or created_at is not an ISO 8601 date-time. One such row
+    would fail the whole BigQuery load job, so the caller must skip it.
     """
     actor = event.get("actor") or {}
     repo = event.get("repo") or {}
     payload = event.get("payload") or {}
+
+    event_id = _non_empty_str(event.get("id"))
+    event_type = _non_empty_str(event.get("type"))
+    actor_login = _non_empty_str(actor.get("login"))
+    repo_name = _non_empty_str(repo.get("name"))
+    created_at = _non_empty_str(event.get("created_at"))
+    if not (event_id and event_type and actor_login and repo_name and created_at):
+        return None
+
+    try:
+        event_date = datetime.date.fromisoformat(created_at[:10]).isoformat()
+    except ValueError:
+        return None
+
     slim_payload: dict[str, Any] = {"action": payload.get("action")}
-    if event.get("type") == "PullRequestEvent":
+    if event_type == "PullRequestEvent":
         slim_payload["merged"] = (payload.get("pull_request") or {}).get("merged")
+    elif event_type == "CreateEvent":
+        slim_payload["ref_type"] = payload.get("ref_type")
+
+    repo_id = repo.get("id")
     return {
-        "id": event.get("id"),
-        "type": event.get("type"),
-        "actor": {"id": actor.get("id"), "login": actor.get("login")},
-        "repo": {"id": repo.get("id"), "name": repo.get("name")},
+        "id": event_id,
+        "type": event_type,
+        "actor_login": actor_login,
+        "repo_id": repo_id if isinstance(repo_id, int) and not isinstance(repo_id, bool) else None,
+        "repo_name": repo_name,
         "payload": slim_payload,
-        "public": event.get("public"),
-        "created_at": event.get("created_at"),
+        "created_at": created_at,
+        "event_date": event_date,
     }
 
 
-def _collect_hour_lines(target_date: datetime.date, hour: int) -> list[str]:
-    """Fetch one hour and return its JSONL lines, retrying the whole hour on failure.
+def _collect_hour_lines(target_date: datetime.date, hour: int) -> tuple[list[str], int]:
+    """Fetch one hour and return its JSONL lines and the number of skipped events.
 
     The hour is retried from scratch (new HTTP stream and new decompressor), because
     resuming a half-consumed gzip stream is not possible. A 404 is not retried here:
-    the connection layer already retried it (DD-001 3.3).
+    the connection layer already retried it (DD-001 3.3). Events lacking a REQUIRED
+    column are skipped and counted (project_event returned None).
     """
     attempt = 0
     while True:
         try:
             byte_stream = fetch_hourly_stream(target_date, hour)
-            return [
-                json.dumps(project_event(event), ensure_ascii=False) + "\n"
-                for event in extract_target_events(byte_stream)
-            ]
+            lines: list[str] = []
+            skipped = 0
+            for event in extract_target_events(byte_stream):
+                row = project_event(event)
+                if row is None:
+                    skipped += 1
+                    continue
+                lines.append(json.dumps(row, ensure_ascii=False) + "\n")
+            return lines, skipped
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 raise
@@ -133,6 +169,7 @@ def run_daily_ingestion_to_writer(
 
     total_events = 0
     total_bytes = 0
+    total_skipped = 0
     processed_hours: list[int] = []
     failed_hours: list[int] = []
 
@@ -140,7 +177,7 @@ def run_daily_ingestion_to_writer(
 
     for hour in hours:
         try:
-            lines = _collect_hour_lines(target_date, hour)
+            lines, skipped = _collect_hour_lines(target_date, hour)
         except Exception as exc:
             logger.warning("  Hour %02d failed: %s", hour, exc)
             failed_hours.append(hour)
@@ -152,8 +189,9 @@ def run_daily_ingestion_to_writer(
             writer.write(line)
             total_bytes += len(line.encode("utf-8"))
         total_events += len(lines)
+        total_skipped += skipped
         processed_hours.append(hour)
-        logger.info("  Hour %02d: Extracted %d target events", hour, len(lines))
+        logger.info("  Hour %02d: Extracted %d target events (skipped %d)", hour, len(lines), skipped)
 
     if not processed_hours:
         status = "FAILED"
@@ -162,11 +200,17 @@ def run_daily_ingestion_to_writer(
     else:
         status = "SUCCESS"
 
+    if total_skipped:
+        logger.warning(
+            "Skipped %d events lacking REQUIRED columns (id/type/actor_login/repo_name/created_at)",
+            total_skipped,
+        )
     logger.info(
-        "Daily ingestion finished: status=%s, total_events=%d, total_bytes=%d",
+        "Daily ingestion finished: status=%s, total_events=%d, total_bytes=%d, skipped_events=%d",
         status,
         total_events,
         total_bytes,
+        total_skipped,
     )
 
     return IngestionSummaryDTO(
@@ -177,6 +221,7 @@ def run_daily_ingestion_to_writer(
         processed_hours=processed_hours,
         failed_hours=failed_hours,
         status=status,
+        skipped_events=total_skipped,
     )
 
 
