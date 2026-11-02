@@ -15,6 +15,8 @@ uv.lock
 !.env.example
 !*.env.example
 
+# Airflow runtime
+airflow/logs/
 # Ruff / Tools
 .ruff_cache/
 .mypy_cache/
