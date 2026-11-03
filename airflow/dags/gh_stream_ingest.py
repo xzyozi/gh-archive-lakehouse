@@ -14,8 +14,8 @@ from airflow.operators.python import PythonOperator
 
 from airflow import DAG
 
-# Default bucket name from environment variable
-GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "octopulse-data-lake")
+# Default bucket name from environment variable (falls back to Terraform default pattern)
+GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "octopulse-lakehouse")
 
 
 def execute_daily_ingestion(ds: str, **context: Any) -> dict[str, Any]:
