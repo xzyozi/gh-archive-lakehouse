@@ -11,11 +11,13 @@ import os
 from typing import Any
 
 from airflow.operators.python import PythonOperator
+from airflow.providers.google.cloud.transfers.gcs_to_bigquery import GCSToBigQueryOperator
 
 from airflow import DAG
 
-# Default bucket name from environment variable (falls back to Terraform default pattern)
+# Default bucket and dataset prefix from environment variables (falls back to Terraform default pattern)
 GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "octopulse-lakehouse")
+DATASET_PREFIX = os.environ.get("GCP_DATASET_PREFIX", "octopulse")
 
 
 def execute_daily_ingestion(ds: str, **context: Any) -> dict[str, Any]:
@@ -85,4 +87,20 @@ with DAG(
         python_callable=execute_daily_ingestion,
     )
 
-    ingest_task
+    # Phase 2: Load daily flat JSONL from GCS to BigQuery Bronze (stg_github_events)
+    # Uses partition decorator ($YYYYMMDD) and WRITE_TRUNCATE to ensure idempotent partition-level overwrites.
+    load_bronze_task = GCSToBigQueryOperator(
+        task_id="load_gcs_to_bigquery_bronze",
+        bucket=GCS_BUCKET_NAME,
+        source_objects=[
+            "raw/{{ ds_nodash[:4] }}/{{ ds_nodash[4:6] }}/{{ ds_nodash[6:8] }}/events_{{ ds_nodash }}.jsonl"
+        ],
+        destination_project_dataset_table=(
+            f"{DATASET_PREFIX}_bronze.stg_github_events${{{{ ds_nodash }}}}"
+        ),
+        source_format="NEWLINE_DELIMITED_JSON",
+        write_disposition="WRITE_TRUNCATE",
+        autodetect=False,
+    )
+
+    ingest_task >> load_bronze_task
