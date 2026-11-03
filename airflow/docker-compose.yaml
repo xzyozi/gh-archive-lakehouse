@@ -14,7 +14,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
     PYTHONPATH: /opt/airflow/src
     GOOGLE_APPLICATION_CREDENTIALS: /home/airflow/.config/gcloud/application_default_credentials.json
-    GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-octopulse-data-lake}
+    GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-octopulse-lakehouse}
     GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
   volumes:
     - ./dags:/opt/airflow/dags
