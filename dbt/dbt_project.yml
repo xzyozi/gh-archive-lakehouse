@@ -1,0 +1,33 @@
+name: 'octopulse'
+version: '1.0.0'
+config-version: 2
+
+profile: 'octopulse'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  octopulse:
+    # Always Free 枠死守のためのクエリスキャン上限ガードレール (BD-001 3.2)
+    +maximum_bytes_billed: 1073741824 # 1GB 上限強制
+
+    staging:
+      +materialized: view
+      +schema: bronze
+
+    silver:
+      +materialized: incremental
+      +schema: silver
+
+    gold:
+      +materialized: incremental
+      +schema: gold

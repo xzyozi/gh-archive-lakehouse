@@ -1,0 +1,26 @@
+# dbt profiles.yml 設定例
+# ローカル開発では ~/.dbt/profiles.yml に配置するか、DBT_PROFILES_DIR を指定してください。
+# 認証は ADC (Application Default Credentials) または WIF を利用します。
+
+octopulse:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('GCP_PROJECT_ID', 'your-gcp-project-id') }}"
+      dataset: "{{ env_var('GCP_DATASET_PREFIX', 'octopulse') }}_silver"
+      location: us-central1
+      threads: 4
+      timeout_seconds: 300
+      maximum_bytes_billed: 1073741824 # 1GB (Always Free 死守)
+
+    prod:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('GCP_PROJECT_ID', 'your-gcp-project-id') }}"
+      dataset: "{{ env_var('GCP_DATASET_PREFIX', 'octopulse') }}_silver"
+      location: us-central1
+      threads: 4
+      timeout_seconds: 300
+      maximum_bytes_billed: 1073741824
