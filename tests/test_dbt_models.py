@@ -49,6 +49,30 @@ def test_dbt_project_guardrails() -> None:
     assert "models:" in project_yml
 
 
+def test_validate_dbt_workflow_pins_match_dockerfile() -> None:
+    """CI の dbt 検証が、実際に Airflow イメージへ入る dbt と同じ版で行われること。"""
+    root = DBT_DIR.parent
+    dockerfile = (root / "airflow" / "Dockerfile").read_text(encoding="utf-8")
+    workflow = (root / ".github" / "workflows" / "validate-dbt.yml").read_text(encoding="utf-8")
+    for package in ("dbt-core", "dbt-bigquery"):
+        docker_pin = re.search(rf'"{package}==([0-9.]+)"', dockerfile)
+        workflow_pin = re.search(rf'"{package}==([0-9.]+)"', workflow)
+        assert docker_pin and workflow_pin, package
+        assert docker_pin.group(1) == workflow_pin.group(1), f"{package}: Dockerfile と validate-dbt.yml のピンが不一致"
+
+
+def test_validate_dbt_workflow_does_not_need_warehouse_access() -> None:
+    """CI の dbt 検証はウェアハウスへ接続せず、認証情報も使わないこと。"""
+    workflow = (DBT_DIR.parent / ".github" / "workflows" / "validate-dbt.yml").read_text(encoding="utf-8")
+    assert "dbt parse" in workflow and "dbt ls" in workflow
+    # 接続を伴うコマンドは実行しない（実機確認は別 Issue）
+    for command in ("dbt run", "dbt test", "dbt compile", "dbt build", "dbt debug"):
+        assert not re.search(rf"^\s*(?:run:\s*)?{command}\b", workflow, re.MULTILINE), command
+    # 認証系の設定を持ち込まない
+    for forbidden in ("google-github-actions/auth", "GOOGLE_APPLICATION_CREDENTIALS", "secrets."):
+        assert forbidden not in workflow, forbidden
+
+
 def test_output_datasets_match_terraform() -> None:
     """出力先が Terraform の <prefix>_bronze/silver/gold と一致し、Bronze 実テーブルと衝突しないこと。"""
     macro = (DBT_DIR / "macros/generate_schema_name.sql").read_text(encoding="utf-8")
