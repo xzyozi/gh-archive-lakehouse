@@ -1,0 +1,66 @@
+version: 2
+
+models:
+  - name: mart_oss_quadrant
+    description: "CHAOSS 2軸評価 4象限ゴールドマート (DS-001 2.5, 2.6)"
+    columns:
+      - name: target_date
+        description: "集計対象日 (パーティションキー)"
+        tests:
+          - not_null
+      - name: repo_name
+        description: "リポジトリフルネーム"
+        tests:
+          - not_null
+      - name: primary_language
+        description: "主要言語"
+      - name: topics_display
+        description: "トピック表示用文字列"
+      - name: repo_age_days
+        description: "開設からの経過日数"
+      - name: daily_stars
+        description: "当日の新規Star数"
+        tests:
+          - not_null
+      - name: daily_forks
+        description: "当日の新規Fork数"
+        tests:
+          - not_null
+      - name: daily_issues
+        description: "当日のIssue数"
+        tests:
+          - not_null
+      - name: daily_prs
+        description: "当日のPR数"
+        tests:
+          - not_null
+      - name: attention_velocity
+        description: "Attention Velocity 正規化スコア (0.00〜1.00)"
+        tests:
+          - not_null
+      - name: engagement_depth
+        description: "Engagement Depth 正規化スコア (0.00〜1.00)"
+        tests:
+          - not_null
+      - name: quadrant_segment
+        description: "4象限セグメント名"
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - Hyper-Growth
+                - Viral Spotlight
+                - Silent Utility
+                - Niche / Emerging
+      - name: is_suspicious_star_surge
+        description: "スパム・Bot工作疑いフラグ"
+        tests:
+          - not_null
+      - name: is_bot_generated_prs
+        description: "テスト自動化ボット疑いフラグ"
+        tests:
+          - not_null
+      - name: is_newborn_buzz
+        description: "開設即日(7日以内)急上昇フラグ"
+        tests:
+          - not_null

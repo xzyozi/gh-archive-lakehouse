@@ -1,0 +1,65 @@
+version: 2
+
+models:
+  - name: fct_github_events
+    description: "クレンジング済み GitHub イベントファクトテーブル (DS-001 2.4①)"
+    columns:
+      - name: event_id
+        description: "イベント一意識別子 (主キー)"
+        tests:
+          - unique
+          - not_null
+      - name: event_type
+        description: "イベント種別"
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - WatchEvent
+                - ForkEvent
+                - IssuesEvent
+                - PullRequestEvent
+                - CreateEvent
+      - name: actor_login
+        description: "実行ユーザー名"
+        tests:
+          - not_null
+      - name: repo_name
+        description: "リポジトリフルネーム"
+        tests:
+          - not_null
+      - name: event_action
+        description: "ペイロード内 action (started, opened, closed 等)"
+      - name: event_at
+        description: "イベント発生日時 (UTC)"
+        tests:
+          - not_null
+      - name: event_date
+        description: "パーティションキー (日別)"
+        tests:
+          - not_null
+
+  - name: dim_repositories
+    description: "リポジトリディメンションテーブル (DS-001 2.4②, 論点②)"
+    columns:
+      - name: repo_name
+        description: "リポジトリフルネーム (主キー)"
+        tests:
+          - unique
+          - not_null
+      - name: primary_language
+        description: "主要言語"
+      - name: topics
+        description: "トピックタグ配列"
+      - name: description
+        description: "リポジトリ説明文"
+      - name: repo_created_at
+        description: "リポジトリ開設日時 (CreateEvent 由来または API)"
+      - name: total_stars
+        description: "累計 Star 数"
+      - name: total_forks
+        description: "累計 Fork 数"
+      - name: metadata_updated_at
+        description: "メタデータ更新日時"
+        tests:
+          - not_null

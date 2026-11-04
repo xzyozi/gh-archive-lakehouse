@@ -1,0 +1,40 @@
+version: 2
+
+sources:
+  - name: bronze
+    database: "{{ env_var('GCP_PROJECT_ID', target.project) }}"
+    schema: "{{ env_var('GCP_DATASET_PREFIX', 'octopulse') }}_bronze"
+    tables:
+      - name: stg_github_events
+        description: "Raw GitHub events flat schema loaded directly from GCS (DS-001 2.3)"
+        columns:
+          - name: id
+            description: "GH Archiveイベントの一意識別子"
+            tests:
+              - not_null
+          - name: type
+            description: "イベント種別 (WatchEvent, ForkEvent, IssuesEvent, PullRequestEvent, CreateEvent)"
+            tests:
+              - not_null
+          - name: actor_login
+            description: "イベント実行ユーザーのアカウント名"
+            tests:
+              - not_null
+          - name: repo_id
+            description: "GitHub リポジトリID"
+          - name: repo_name
+            description: "リポジトリフルネーム (owner/repo)"
+            tests:
+              - not_null
+          - name: payload
+            description: "射影済みペイロード JSON"
+            tests:
+              - not_null
+          - name: created_at
+            description: "イベント発生時刻 (UTC)"
+            tests:
+              - not_null
+          - name: event_date
+            description: "パーティションキー (created_at の日付部分)"
+            tests:
+              - not_null
