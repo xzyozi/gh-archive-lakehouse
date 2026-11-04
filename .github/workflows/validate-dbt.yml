@@ -1,0 +1,78 @@
+name: Validate dbt
+
+# dbt プロジェクトの構文（Jinja・YAML・ref/source の解決・マクロ）を検証する。
+# `dbt parse` と `dbt ls` は BigQuery へ接続せず、認証情報も不要。
+# `dbt ls` は Airflow の Cosmos (LoadMode.DBT_LS) が DAG 描画時に実行するコマンドと同じで、
+# ここで通れば「DAG が描画できない」型の不具合を事前に検出できる。
+# バージョンは airflow/Dockerfile のピンと同じ（tests/test_dbt_models.py が一致を検証する）。
+# 実データでの動作は検証しない（実機確認は別 Issue で管理）。
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "dbt/**"
+      - "airflow/Dockerfile"
+      - ".github/workflows/validate-dbt.yml"
+  push:
+    branches: [main, develop]
+    paths:
+      - "dbt/**"
+      - "airflow/Dockerfile"
+      - ".github/workflows/validate-dbt.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-dbt-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-dbt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dbt
+        shell: bash
+        run: |
+          python -m pip install --quiet "dbt-core==1.11.16" "dbt-bigquery==1.11.3"
+          dbt --version
+
+      # Cosmos は profiles.yml.example を profiles.yml としてマウントする。CI でも同じ名前で配置して検証する。
+      - name: Prepare profile
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/dbt-profiles"
+          cp dbt/profiles.yml.example "$RUNNER_TEMP/dbt-profiles/profiles.yml"
+
+      - name: dbt parse (default run_date)
+        shell: bash
+        env:
+          DBT_PROFILES_DIR: ${{ runner.temp }}/dbt-profiles
+        run: dbt parse --project-dir dbt --no-partial-parse
+
+      - name: dbt parse (explicit run_date, as passed by Airflow)
+        shell: bash
+        env:
+          DBT_PROFILES_DIR: ${{ runner.temp }}/dbt-profiles
+        run: dbt parse --project-dir dbt --no-partial-parse --vars '{run_date: "2026-11-03", lookback_days: 3}'
+
+      - name: dbt ls (same command as Cosmos DBT_LS rendering)
+        shell: bash
+        env:
+          DBT_PROFILES_DIR: ${{ runner.temp }}/dbt-profiles
+        run: |
+          dbt ls --project-dir dbt --resource-type model --output name | tee "$RUNNER_TEMP/models.txt"
+          for m in stg_github_events fct_github_events dim_repositories mart_oss_quadrant; do
+            grep -qx "$m" "$RUNNER_TEMP/models.txt" || { echo "model not found: $m"; exit 1; }
+          done
