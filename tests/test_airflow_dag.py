@@ -82,3 +82,73 @@ def test_source_objects_path_matches_uploader_blob_path() -> None:
     assert simulated_path == expected_path, (
         f"Path mismatch: simulated={simulated_path}, expected={expected_path}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: Cosmos による dbt 統合 (Issue #30)
+# ---------------------------------------------------------------------------
+
+COMPOSE_FILE = Path(__file__).resolve().parent.parent / "airflow" / "docker-compose.yaml"
+DBT_DIR = Path(__file__).resolve().parent.parent / "dbt"
+
+
+def test_dag_imports_cosmos() -> None:
+    """Cosmos の主要クラスと定数がインポートされていること。"""
+    tree = ast.parse(DAG_FILE.read_text(encoding="utf-8"))
+    imported = {alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) for alias in node.names}
+    for name in (
+        "DbtTaskGroup",
+        "ProjectConfig",
+        "ProfileConfig",
+        "ExecutionConfig",
+        "RenderConfig",
+        "ExecutionMode",
+        "LoadMode",
+        "TestBehavior",
+    ):
+        assert name in imported, name
+
+
+def test_dbt_task_group_contract() -> None:
+    """DbtTaskGroup の構成が設計 (BD-001 C-ORCHESTRATE / Issue #30 の決定事項) と一致すること。"""
+    source = DAG_FILE.read_text(encoding="utf-8")
+
+    assert "DbtTaskGroup(" in source
+    assert 'group_id="dbt_transform"' in source
+    # Dockerfile の専用 venv で実行する (Airflow と dbt の依存を分離)
+    assert "ExecutionMode.LOCAL" in source
+    assert "/opt/airflow/dbt_venv/bin/dbt" in source
+    # Q4: まず DBT_LS で描画 / Q7: 各モデル直後にテスト
+    assert "LoadMode.DBT_LS" in source
+    assert "TestBehavior.AFTER_EACH" in source
+    # 論理日付を dbt に渡す (NFR-004: 過去日の再実行が冪等になる)
+    assert '"vars": {"run_date": "{{ ds }}"}' in source
+    # ネットワークアクセスを伴う dbt deps は実行しない (packages.yml なし)
+    assert "dbt_deps=False" in source
+    assert '"install_deps": False' in source
+
+
+def test_dbt_runs_after_bronze_load() -> None:
+    """ingest → Bronze Load → dbt の順で依存していること。"""
+    source = DAG_FILE.read_text(encoding="utf-8")
+    assert "ingest_task >> load_bronze_task >> dbt_transform" in source
+
+
+def test_dbt_profile_is_single_source_with_guardrail() -> None:
+    """dbt の profile は profiles.yml.example を profiles.yml としてマウントし、1GB ガードレールを一元化すること。"""
+    compose = COMPOSE_FILE.read_text(encoding="utf-8")
+    assert "../dbt:/opt/airflow/dbt:ro" in compose
+    # Cosmos は profiles_yml_filepath の親ディレクトリを --profiles-dir に使うため、ファイル名は profiles.yml 固定
+    assert "../dbt/profiles.yml.example:/opt/airflow/dbt_profiles/profiles.yml:ro" in compose
+
+    dag = DAG_FILE.read_text(encoding="utf-8")
+    assert "/opt/airflow/dbt_profiles/profiles.yml" in dag
+    assert (DBT_DIR / "profiles.yml.example").is_file()
+
+
+def test_compose_passes_dataset_prefix_and_writable_dbt_paths() -> None:
+    """dbt が参照する GCP_DATASET_PREFIX を渡し、読み取り専用マウントでも書き込める出力先を指定すること。"""
+    compose = COMPOSE_FILE.read_text(encoding="utf-8")
+    assert "GCP_DATASET_PREFIX:" in compose
+    assert "DBT_TARGET_PATH: /tmp/dbt_target" in compose
+    assert "DBT_LOG_PATH: /tmp/dbt_logs" in compose

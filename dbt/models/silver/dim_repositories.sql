@@ -16,7 +16,7 @@ with create_events as (
     where event_type = 'CreateEvent'
       and json_value(payload.ref_type) = 'repository'
     {% if is_incremental() %}
-      and event_date >= date_sub(current_date(), interval {{ var('lookback_days') }} day)
+      and {{ incremental_window('event_date') }}
     {% endif %}
     group by repo_name
 ),
@@ -27,7 +27,7 @@ active_repos as (
         repo_name
     from {{ ref('stg_github_events') }}
     {% if is_incremental() %}
-    where event_date >= date_sub(current_date(), interval {{ var('lookback_days') }} day)
+    where {{ incremental_window('event_date') }}
     {% endif %}
 ),
 

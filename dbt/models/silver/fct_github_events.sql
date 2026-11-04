@@ -24,5 +24,5 @@ select
 from {{ ref('stg_github_events') }}
 
 {% if is_incremental() %}
-where event_date >= date_sub(current_date(), interval {{ var('lookback_days') }} day)
+where {{ incremental_window('event_date') }}
 {% endif %}

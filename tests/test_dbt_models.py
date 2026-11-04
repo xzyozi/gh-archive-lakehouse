@@ -19,6 +19,7 @@ def test_dbt_files_exist() -> None:
         "profiles.yml.example",
         "README.md",
         "macros/generate_schema_name.sql",
+        "macros/incremental_window.sql",
         "models/staging/sources.yml",
         "models/staging/stg_github_events.sql",
         "models/silver/schema.yml",
@@ -62,17 +63,29 @@ def test_output_datasets_match_terraform() -> None:
     assert "+schema: silver" in staging_block
 
 
-def test_incremental_lookback_is_configurable() -> None:
-    """差分取り込み範囲が var('lookback_days') で上書き可能であること。"""
+def test_incremental_window_is_configurable_and_idempotent() -> None:
+    """差分取り込み窓が lookback_days / run_date で制御でき、過去日の再実行が冪等であること (NFR-004)。"""
     project_yml = (DBT_DIR / "dbt_project.yml").read_text(encoding="utf-8")
     assert re.search(r"lookback_days:\s*\d+", project_yml)
+
+    macro = (DBT_DIR / "macros/incremental_window.sql").read_text(encoding="utf-8")
+    assert "macro incremental_window" in macro
+    assert "var('lookback_days')" in macro
+    assert "var('run_date'" in macro
+    # run_date は SQL に埋め込むため、日付形式の検証があること
+    assert "raise_compiler_error" in macro
+    # 下限だけでなく上限 (run_date) があること。上限が無いと過去日の再実行が冪等にならない
+    assert re.search(r"between\s+date_sub\(.+\)\s+and\s+\{\{\s*run_date_expr\(\)\s*\}\}", macro, re.DOTALL)
+
     for rel in (
         "models/silver/fct_github_events.sql",
         "models/silver/dim_repositories.sql",
         "models/gold/mart_oss_quadrant.sql",
     ):
         sql = (DBT_DIR / rel).read_text(encoding="utf-8")
-        assert "var('lookback_days')" in sql, rel
+        assert "incremental_window('event_date')" in sql, rel
+        # モデルに窓の条件を直書きしない (current_date 基準だと backfill で ds が反映されない)
+        assert "current_date()" not in sql, rel
         assert "interval 3 day" not in sql, rel
 
 

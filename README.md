@@ -73,10 +73,10 @@ flowchart TD
 ```mermaid
 flowchart LR
     P0["Phase 0: 設計・実データ検証<br/>【完了】"]:::done --> P1["Phase 1: Terraform IaC<br/>【完了】"]:::done
-    P1 --> P2["Phase 2: BQ Bronze Load<br/>【次フェーズ】"]:::current
-    P2 --> P3["Phase 3: dbt モデリング<br/>【未着手】"]:::todo
+    P1 --> P2["Phase 2: BQ Bronze Load<br/>【実装済み】"]:::done
+    P2 --> P3["Phase 3: dbt モデリング<br/>【実装済み】"]:::done
     P3 --> P4["Phase 4: API Enrichment<br/>【未着手】"]:::todo
-    P4 --> P5["Phase 5: Cosmos E2E統合<br/>【未着手】"]:::todo
+    P4 --> P5["Phase 5: Cosmos E2E統合<br/>【実装中】"]:::current
     P5 --> P6["Phase 6: Looker Studio BI<br/>【未着手】"]:::todo
 
     classDef done fill:#d4edda,stroke:#28a745,stroke-width:2px;
@@ -84,15 +84,15 @@ flowchart LR
     classDef todo fill:#f8f9fa,stroke:#6c757d,stroke-dasharray: 5 5;
 ```
 
-| フェーズ | 概要 | 状態 | 成果物・参照先 |
-| :--- | :--- | :---: | :--- |
-| **Phase 0** | 基本・詳細・データ設計および実データ検証 | **完了** | [`BD-001`](docs/design/BD-001_基本設計書.md), [`DS-001`](docs/design/DS-001_データ構造仕様書.md), [`TEST-001`](docs/test/TEST-001_Ingestionストリーミング実データ検証報告書.md)〜[`003`](docs/test/TEST-003_Bronzeフラット形式出力の実データ検証報告書.md) |
-| **Phase 1** | Terraform による GCP Always Free インフラ構築 | **完了** | [`terraform/`](terraform/) (GCS, BigQuery, WIF, 契約テスト) |
-| **Phase 2** | GCS から BigQuery Bronze へのロード処理 | **次着手** | `airflow/dags/gh_stream_ingest.py` (Load Job 連携) |
-| **Phase 3** | dbt メダリオンモデリング (Silver / Gold) | 未着手 | `dbt/` (stg, fct, dim, mart_oss_quadrant) |
-| **Phase 4** | GitHub API メタデータ補完 (Enrichment) | 未着手 | Top 200 リポジトリ GraphQL バッチ取得 |
-| **Phase 5** | Airflow × Astronomer Cosmos E2E 統合 | 未着手 | 全自動オーケストレーション |
-| **Phase 6** | Looker Studio ダッシュボード構築 | 未着手 | 4象限バブルチャート・抽出データソース |
+| フェーズ    | 概要                                          |                    状態                     | 成果物・参照先                                                                                                                                                                                                                                             |
+| :---------- | :-------------------------------------------- | :-----------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Phase 0** | 基本・詳細・データ設計および実データ検証      |                  **完了**                   | [`BD-001`](docs/design/BD-001_基本設計書.md), [`DS-001`](docs/design/DS-001_データ構造仕様書.md), [`TEST-001`](docs/test/TEST-001_Ingestionストリーミング実データ検証報告書.md)〜[`003`](docs/test/TEST-003_Bronzeフラット形式出力の実データ検証報告書.md) |
+| **Phase 1** | Terraform による GCP Always Free インフラ構築 |                  **完了**                   | [`terraform/`](terraform/) (GCS, BigQuery, WIF, 契約テスト)                                                                                                                                                                                                |
+| **Phase 2** | GCS から BigQuery Bronze へのロード処理       |    実装済み (実機検証は Phase 5 で実施)     | `airflow/dags/gh_stream_ingest.py` (Load Job 連携)                                                                                                                                                                                                         |
+| **Phase 3** | dbt メダリオンモデリング (Silver / Gold)      |    実装済み (実機検証は Phase 5 で実施)     | [`dbt/`](dbt/) (stg, fct, dim, mart_oss_quadrant)                                                                                                                                                                                                          |
+| **Phase 4** | GitHub API メタデータ補完 (Enrichment)        |                   未着手                    | Top 200 リポジトリ GraphQL バッチ取得                                                                                                                                                                                                                      |
+| **Phase 5** | Airflow × Astronomer Cosmos E2E 統合          | **実装中** (DAG 組み込み済み、実機検証待ち) | [`DD-004`](docs/design/DD-004_オーケストレーション詳細設計書.md), `airflow/dags/gh_stream_ingest.py`                                                                                                                                                       |
+| **Phase 6** | Looker Studio ダッシュボード構築              |                   未着手                    | 4象限バブルチャート・抽出データソース                                                                                                                                                                                                                      |
 
 ---
 
@@ -100,7 +100,9 @@ flowchart LR
 
 * **基本設計書**: [`docs/design/BD-001_基本設計書.md`](docs/design/BD-001_基本設計書.md) - 全体アーキテクチャ、非機能要件、セキュリティ方針
 * **データ構造仕様書**: [`docs/design/DS-001_データ構造仕様書.md`](docs/design/DS-001_データ構造仕様書.md) - メダリオンテーブル定義、確定した CHAOSS 2軸モデリング計算式
-* **詳細設計書**: [`docs/design/DD-001_Ingestionエンジン詳細設計書.md`](docs/design/DD-001_Ingestionエンジン詳細設計書.md) - Ingestion ストリーミング内部仕様
+* **詳細設計書**:
+  * [`docs/design/DD-001_Ingestionエンジン詳細設計書.md`](docs/design/DD-001_Ingestionエンジン詳細設計書.md) - Ingestion ストリーミング内部仕様
+  * [`docs/design/DD-004_オーケストレーション詳細設計書.md`](docs/design/DD-004_オーケストレーション詳細設計書.md) - Airflow × Cosmos による日次パイプラインの制御仕様
 * **アーキテクチャ決定記録 (ADR)**:
   * [`ADR-001: ドキュメントガバナンスとSSOT`](docs/adr/001-document-governance-and-ssot.md)
   * [`ADR-002: Bronze取り込み形式とRepoAge導出`](docs/adr/002-ingest-repository-create-event.md)
