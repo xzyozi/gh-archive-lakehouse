@@ -16,11 +16,22 @@ x-airflow-common: &airflow-common
     GOOGLE_APPLICATION_CREDENTIALS: /home/airflow/.config/gcloud/application_default_credentials.json
     GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-octopulse-lakehouse}
     GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+    # BigQuery dataset prefix. Used by both the DAG and dbt (generate_schema_name macro / sources.yml).
+    GCP_DATASET_PREFIX: ${GCP_DATASET_PREFIX:-octopulse}
+    # dbt target in profiles.yml (dev / prod)
+    DBT_TARGET: ${DBT_TARGET:-dev}
+    # The dbt project is mounted read-only, so dbt writes its artifacts and logs to /tmp.
+    DBT_TARGET_PATH: /tmp/dbt_target
+    DBT_LOG_PATH: /tmp/dbt_logs
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
     - ../src:/opt/airflow/src:ro
+    # dbt project (read-only) and its profile. The profile is the single source with the guardrail
+    # (maximum_bytes_billed); it is mounted as profiles.yml because Cosmos requires that file name.
+    - ../dbt:/opt/airflow/dbt:ro
+    - ../dbt/profiles.yml.example:/opt/airflow/dbt_profiles/profiles.yml:ro
     # Mount host Google Cloud ADC in read-only mode (No fixed key files)
     # Override GCLOUD_CONFIG_DIR in .env when ADC lives elsewhere (e.g. Windows: %APPDATA%\gcloud)
     - ${GCLOUD_CONFIG_DIR:-~/.config/gcloud}:/home/airflow/.config/gcloud:ro

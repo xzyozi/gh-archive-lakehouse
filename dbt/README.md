@@ -32,6 +32,8 @@ Linux Foundation 傘下の「CHAOSS」標準に準拠した 2軸パーセンタ�
 * **再処理範囲**: インクリメンタル実行は直近 `lookback_days`（既定 3 日）を再処理します。backfill は `dbt run --vars '{lookback_days: 30}'` のように上書きします。
 * **未充填の列**: `dim_repositories` の `primary_language` / `topics` / `description` / `total_stars` / `total_forks` は、本 Issue のスコープでは Enrichment 未実装のため NULL（`topics` は空配列）です。
 
+* **Airflow からの実行**: `airflow/dags/gh_stream_ingest.py` の `DbtTaskGroup`（Astronomer Cosmos）が、Bronze ロードの後に本プロジェクトを実行します。論理日付 `ds` が `run_date` として渡されます。制御仕様は [`DD-004`](../docs/design/DD-004_オーケストレーション詳細設計書.md) を参照してください。
+
 ---
 
 ## 3. 実行手順
@@ -45,6 +47,13 @@ export GCP_DATASET_PREFIX="octopulse"
 ```
 
 ### 2. モデル実行・テスト
+
+インクリメンタルモデルの再処理窓は `[run_date - lookback_days, run_date]` です（`macros/incremental_window.sql`）。手動実行で `run_date` を省略すると `current_date()` になります。過去日を再実行する場合は日付を明示してください。
+
+```bash
+dbt run --vars '{run_date: 2026-11-03}'
+```
+
 ```bash
 cd dbt
 

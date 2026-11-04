@@ -1,23 +1,37 @@
-"""Airflow DAG: Daily GH Archive In-flight Ingestion to GCS (Zero-Disk I/O).
+"""Airflow DAG: Daily GH Archive Ingestion -> GCS -> BigQuery Bronze -> dbt (Silver/Gold).
 
 Schedules daily streaming ingestion from GH Archive to Google Cloud Storage
-without local disk storage, conforming to OctoPulse basic design (BD-001).
+without local disk storage, loads it into BigQuery Bronze, then runs the dbt
+medallion models (Staging -> Silver -> Gold) through Astronomer Cosmos so that
+each dbt model and test is a separate, individually retryable Airflow task
+(BD-001 C-ORCHESTRATE).
 """
 
 from __future__ import annotations
 
 import datetime
 import os
+from pathlib import Path
 from typing import Any
 
 from airflow.operators.python import PythonOperator
 from airflow.providers.google.cloud.transfers.gcs_to_bigquery import GCSToBigQueryOperator
+from cosmos import DbtTaskGroup, ExecutionConfig, ProfileConfig, ProjectConfig, RenderConfig
+from cosmos.constants import ExecutionMode, LoadMode, TestBehavior
 
 from airflow import DAG
 
 # Default bucket and dataset prefix from environment variables (falls back to Terraform default pattern)
 GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "octopulse-lakehouse")
 DATASET_PREFIX = os.environ.get("GCP_DATASET_PREFIX", "octopulse")
+
+# dbt (Cosmos) settings. Paths match airflow/docker-compose.yaml mounts and airflow/Dockerfile.
+DBT_PROJECT_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt"))
+# Cosmos passes the parent directory of this file to dbt as --profiles-dir, so the file must be named profiles.yml.
+DBT_PROFILES_FILE = Path(os.environ.get("DBT_PROFILES_FILE", "/opt/airflow/dbt_profiles/profiles.yml"))
+# dbt-core / dbt-bigquery live in a dedicated venv to avoid dependency conflicts with Airflow.
+DBT_EXECUTABLE_PATH = os.environ.get("DBT_EXECUTABLE_PATH", "/opt/airflow/dbt_venv/bin/dbt")
+DBT_TARGET = os.environ.get("DBT_TARGET", "dev")
 
 
 def execute_daily_ingestion(ds: str, **context: Any) -> dict[str, Any]:
@@ -103,4 +117,35 @@ with DAG(
         autodetect=False,
     )
 
-    ingest_task >> load_bronze_task
+    # Phase 5: dbt medallion models (Staging -> Silver -> Gold) as a Cosmos task group.
+    # - Tests run right after each model (AFTER_EACH) so bad data never reaches downstream models.
+    # - run_date is the logical date: re-running a past ds reprocesses only that window (NFR-004 idempotency).
+    # - The 1GB scan guardrail (maximum_bytes_billed) comes from the mounted profiles.yml (BD-001 3.2).
+    dbt_transform = DbtTaskGroup(
+        group_id="dbt_transform",
+        project_config=ProjectConfig(dbt_project_path=DBT_PROJECT_DIR),
+        profile_config=ProfileConfig(
+            profile_name="octopulse",
+            target_name=DBT_TARGET,
+            profiles_yml_filepath=DBT_PROFILES_FILE,
+        ),
+        execution_config=ExecutionConfig(
+            execution_mode=ExecutionMode.LOCAL,
+            dbt_executable_path=DBT_EXECUTABLE_PATH,
+        ),
+        render_config=RenderConfig(
+            load_method=LoadMode.DBT_LS,
+            test_behavior=TestBehavior.AFTER_EACH,
+            dbt_executable_path=DBT_EXECUTABLE_PATH,
+            dbt_deps=False,
+        ),
+        operator_args={
+            "install_deps": False,
+            "vars": {"run_date": "{{ ds }}"},
+        },
+        # Deterministic failures (e.g. maximum_bytes_billed exceeded, failed dbt test) will not succeed on retry,
+        # so retry less than the ingestion tasks, which hit flaky external services.
+        default_args={"retries": 1},
+    )
+
+    ingest_task >> load_bronze_task >> dbt_transform
