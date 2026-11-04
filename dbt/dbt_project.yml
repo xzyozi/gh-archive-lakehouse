@@ -1,33 +1,33 @@
 name: 'octopulse'
 version: '1.0.0'
 config-version: 2
-
 profile: 'octopulse'
-
 model-paths: ["models"]
 analysis-paths: ["analyses"]
 test-paths: ["tests"]
 seed-paths: ["seeds"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
-
 clean-targets:
   - "target"
   - "dbt_packages"
 
+vars:
+  # インクリメンタル実行で再処理する直近日数。backfill 時は --vars '{lookback_days: 30}' で上書きする。
+  lookback_days: 3
+
+# Always Free 枠死守のためのクエリスキャン上限 1GB (BD-001 3.2) は、
+# モデル設定ではなく profiles.yml の maximum_bytes_billed で強制する (profiles.yml.example 参照)。
 models:
   octopulse:
-    # Always Free 枠死守のためのクエリスキャン上限ガードレール (BD-001 3.2)
-    +maximum_bytes_billed: 1073741824 # 1GB 上限強制
-
+    # Staging の view は Bronze の実テーブル stg_github_events と同名のため、
+    # Bronze データセットではなく Silver データセットに作成して衝突を避ける。
     staging:
       +materialized: view
-      +schema: bronze
-
+      +schema: silver
     silver:
       +materialized: incremental
       +schema: silver
-
     gold:
       +materialized: incremental
       +schema: gold

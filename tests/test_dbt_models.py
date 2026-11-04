@@ -18,6 +18,7 @@ def test_dbt_files_exist() -> None:
         "dbt_project.yml",
         "profiles.yml.example",
         "README.md",
+        "macros/generate_schema_name.sql",
         "models/staging/sources.yml",
         "models/staging/stg_github_events.sql",
         "models/silver/schema.yml",
@@ -31,13 +32,48 @@ def test_dbt_files_exist() -> None:
 
 
 def test_dbt_project_guardrails() -> None:
-    """BD-001 3.2: 1GB クエリスキャン上限ガードレールが設定されていること。"""
+    """BD-001 3.2: 1GB クエリスキャン上限が profile の全 target に設定されていること。
+
+    maximum_bytes_billed は接続設定であり、dbt_project.yml のモデル設定としては効かない。
+    """
+    profiles = (DBT_DIR / "profiles.yml.example").read_text(encoding="utf-8")
+    limits = re.findall(r"^\s*maximum_bytes_billed:\s*(\d+)", profiles, re.MULTILINE)
+    targets = re.findall(r"^    (?:dev|prod):\s*$", profiles, re.MULTILINE)
+    assert len(targets) >= 1
+    assert len(limits) == len(targets), "every target must set maximum_bytes_billed"
+    assert all(int(v) == 1073741824 for v in limits), "limit must be 1GB (1,073,741,824 bytes)"
+
     project_yml = (DBT_DIR / "dbt_project.yml").read_text(encoding="utf-8")
-    assert re.search(r"\+maximum_bytes_billed:\s*1073741824", project_yml), (
-        "maximum_bytes_billed must be set to 1GB (1,073,741,824 bytes)"
-    )
     assert "profile: 'octopulse'" in project_yml
     assert "models:" in project_yml
+
+
+def test_output_datasets_match_terraform() -> None:
+    """出力先が Terraform の <prefix>_bronze/silver/gold と一致し、Bronze 実テーブルと衝突しないこと。"""
+    macro = (DBT_DIR / "macros/generate_schema_name.sql").read_text(encoding="utf-8")
+    assert "macro generate_schema_name" in macro
+    assert "env_var('GCP_DATASET_PREFIX', 'octopulse')" in macro
+    assert "target.schema" in macro  # カスタムスキーマ未指定時のフォールバック
+
+    project_yml = (DBT_DIR / "dbt_project.yml").read_text(encoding="utf-8")
+    # Staging view は Bronze 実テーブル stg_github_events と同名のため bronze に置かない
+    staging_block = project_yml.split("staging:")[1].split("silver:")[0]
+    assert "+schema: bronze" not in staging_block
+    assert "+schema: silver" in staging_block
+
+
+def test_incremental_lookback_is_configurable() -> None:
+    """差分取り込み範囲が var('lookback_days') で上書き可能であること。"""
+    project_yml = (DBT_DIR / "dbt_project.yml").read_text(encoding="utf-8")
+    assert re.search(r"lookback_days:\s*\d+", project_yml)
+    for rel in (
+        "models/silver/fct_github_events.sql",
+        "models/silver/dim_repositories.sql",
+        "models/gold/mart_oss_quadrant.sql",
+    ):
+        sql = (DBT_DIR / rel).read_text(encoding="utf-8")
+        assert "var('lookback_days')" in sql, rel
+        assert "interval 3 day" not in sql, rel
 
 
 def test_stg_github_events_model() -> None:

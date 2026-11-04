@@ -21,7 +21,7 @@ with daily_events as (
         event_type
     from {{ ref('fct_github_events') }}
     {% if is_incremental() %}
-    where event_date >= date_sub(current_date(), interval 3 day)
+    where event_date >= date_sub(current_date(), interval {{ var('lookback_days') }} day)
     {% endif %}
 ),
 
