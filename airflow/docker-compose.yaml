@@ -23,6 +23,8 @@ x-airflow-common: &airflow-common
     # The dbt project is mounted read-only, so dbt writes its artifacts and logs to /tmp.
     DBT_TARGET_PATH: /tmp/dbt_target
     DBT_LOG_PATH: /tmp/dbt_logs
+    # Read-only fine-grained PAT for GitHub GraphQL API enrichment (DD-002 4)
+    GITHUB_TOKEN: ${GITHUB_TOKEN:-}
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs

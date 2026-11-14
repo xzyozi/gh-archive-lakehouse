@@ -102,3 +102,129 @@ resource "google_bigquery_table" "stg_github_events" {
 
   labels = locals.common_labels
 }
+
+# Bronze Enrichment 着地テーブル: stg_repo_metadata (DS-001 2.2 / DD-002 5)
+resource "google_bigquery_table" "stg_repo_metadata" {
+  dataset_id  = google_bigquery_dataset.bronze.dataset_id
+  table_id    = "stg_repo_metadata"
+  description = "Staging table for GitHub GraphQL API enrichment results (WRITE_TRUNCATE before MERGE)"
+
+  deletion_protection = false
+
+  schema = jsonencode([
+    {
+      name        = "repo_name"
+      type        = "STRING"
+      mode        = "REQUIRED"
+      description = "リポジトリフルネーム (owner/repo)"
+    },
+    {
+      name        = "primary_language"
+      type        = "STRING"
+      mode        = "NULLABLE"
+      description = "主要言語"
+    },
+    {
+      name        = "topics"
+      type        = "STRING"
+      mode        = "REPEATED"
+      description = "トピックタグ配列"
+    },
+    {
+      name        = "description"
+      type        = "STRING"
+      mode        = "NULLABLE"
+      description = "リポジトリ説明文"
+    },
+    {
+      name        = "repo_created_at"
+      type        = "TIMESTAMP"
+      mode        = "NULLABLE"
+      description = "開設日時 (API の createdAt)"
+    },
+    {
+      name        = "total_stars"
+      type        = "INT64"
+      mode        = "NULLABLE"
+      description = "API取得時点の累計Star数"
+    },
+    {
+      name        = "total_forks"
+      type        = "INT64"
+      mode        = "NULLABLE"
+      description = "API取得時点の累計Fork数"
+    },
+    {
+      name        = "metadata_updated_at"
+      type        = "TIMESTAMP"
+      mode        = "REQUIRED"
+      description = "このリポジトリの最終取得日時"
+    }
+  ])
+
+  labels = locals.common_labels
+}
+
+# Silver Enrichment メタデータテーブル: repo_metadata (DS-001 2.4③ / DD-002)
+resource "google_bigquery_table" "repo_metadata" {
+  dataset_id  = google_bigquery_dataset.silver.dataset_id
+  table_id    = "repo_metadata"
+  description = "GitHub GraphQL API repository metadata maintained exclusively by Airflow Enrichment (DS-001 Rev.1.7)"
+
+  deletion_protection = false
+
+  clustering = ["repo_name"]
+
+  schema = jsonencode([
+    {
+      name        = "repo_name"
+      type        = "STRING"
+      mode        = "REQUIRED"
+      description = "リポジトリフルネーム (主キー・MERGEキー)"
+    },
+    {
+      name        = "primary_language"
+      type        = "STRING"
+      mode        = "NULLABLE"
+      description = "主要言語 (API の primaryLanguage.name)"
+    },
+    {
+      name        = "topics"
+      type        = "STRING"
+      mode        = "REPEATED"
+      description = "トピックタグ配列 (API の repositoryTopics)"
+    },
+    {
+      name        = "description"
+      type        = "STRING"
+      mode        = "NULLABLE"
+      description = "リポジトリ説明文"
+    },
+    {
+      name        = "repo_created_at"
+      type        = "TIMESTAMP"
+      mode        = "NULLABLE"
+      description = "開設日時 (API の createdAt)"
+    },
+    {
+      name        = "total_stars"
+      type        = "INT64"
+      mode        = "NULLABLE"
+      description = "API取得時点の累計Star数"
+    },
+    {
+      name        = "total_forks"
+      type        = "INT64"
+      mode        = "NULLABLE"
+      description = "API取得時点の累計Fork数"
+    },
+    {
+      name        = "metadata_updated_at"
+      type        = "TIMESTAMP"
+      mode        = "REQUIRED"
+      description = "このリポジトリの最終取得日時"
+    }
+  ])
+
+  labels = locals.common_labels
+}
