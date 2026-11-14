@@ -128,10 +128,45 @@ def test_dbt_task_group_contract() -> None:
     assert '"install_deps": False' in source
 
 
-def test_dbt_runs_after_bronze_load() -> None:
-    """ingest → Bronze Load → dbt の順で依存していること。"""
+def test_dbt_runs_after_bronze_load_and_enrichment() -> None:
+    """ingest → Bronze Load → Enrichment → Bronze検証ゲート → dbt の順で依存していること。"""
     source = DAG_FILE.read_text(encoding="utf-8")
-    assert "ingest_task >> load_bronze_task >> dbt_transform" in source
+    assert (
+        "ingest_task >> load_bronze_task >> enrich_repo_metadata >> verify_bronze_before_dbt >> dbt_transform"
+        in source
+    )
+
+
+def test_enrichment_task_group_and_failure_isolation_contract() -> None:
+    """DD-002 5 / 6.5: Enrichment の Staging Load / MERGE / 失敗時 dbt 継続の契約が固定されていること。"""
+    source = DAG_FILE.read_text(encoding="utf-8")
+
+    # TaskGroup と 3 タスクの依存関係
+    assert 'TaskGroup(group_id="enrich_repo_metadata")' in source
+    assert 'task_id="fetch_repo_metadata_to_gcs"' in source
+    assert 'task_id="load_repo_metadata_staging"' in source
+    assert 'task_id="merge_repo_metadata"' in source
+    assert "fetch_repo_metadata_task >> load_repo_metadata_staging_task >> merge_repo_metadata_task" in source
+
+    # Staging Load: WRITE_TRUNCATE, NDJSON, autodetect=False, enrichment/YYYY/MM/DD/
+    assert "enrichment/{{ ds_nodash[:4] }}/{{ ds_nodash[4:6] }}/{{ ds_nodash[6:8] }}/" in source
+    assert "repo_metadata_{{ ds_nodash }}.jsonl" in source
+    assert "_bronze.stg_repo_metadata" in source
+
+    # MERGE: BigQueryInsertJobOperator + 1GB guardrail
+    assert "BigQueryInsertJobOperator" in source
+    assert "_silver.repo_metadata" in source
+    assert '"maximumBytesBilled": "1073741824"' in source
+
+    # DD-002 6.5: Enrichment が失敗しても Bronze 成功なら dbt を動かすゲート (ALL_DONE + load_bronze_task 確認)
+    assert 'task_id="verify_bronze_before_dbt"' in source
+    assert "ShortCircuitOperator" in source
+    assert "trigger_rule=TriggerRule.ALL_DONE" in source
+    assert "check_bronze_load_succeeded" in source
+
+    # Compose に GITHUB_TOKEN が渡されていること
+    compose = COMPOSE_FILE.read_text(encoding="utf-8")
+    assert "GITHUB_TOKEN:" in compose
 
 
 def test_dbt_profile_is_single_source_with_guardrail() -> None:

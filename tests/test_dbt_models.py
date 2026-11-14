@@ -131,13 +131,23 @@ def test_fct_github_events_model() -> None:
 
 
 def test_dim_repositories_incremental_repo_age() -> None:
-    """論点②遵守: dim_repositories が CreateEvent から repo_created_at をインクリメンタル累積保持すること。"""
+    """論点② & DD-002 7: dim_repositories が repo_metadata を結合し、CreateEvent の開設日を累積保持すること。"""
     sql = (DBT_DIR / "models/silver/dim_repositories.sql").read_text(encoding="utf-8")
     assert "CreateEvent" in sql
     assert "json_value(payload.ref_type) = 'repository'" in sql.lower()
     assert "repo_created_at" in sql
-    # 既存レコードとマージ・累積する coalesce
-    assert "coalesce(e.repo_created_at, c.repo_created_at)" in sql or "coalesce" in sql.lower()
+    assert "source('silver', 'repo_metadata')" in sql
+    # API 由来の開設日を優先し、未補完時は CreateEvent 累積値を使用
+    assert "coalesce(r.repo_created_at, e.repo_created_at, c.repo_created_at)" in sql
+
+    sources_yml = (DBT_DIR / "models/staging/sources.yml").read_text(encoding="utf-8")
+    assert "- name: silver" in sources_yml
+    assert "- name: repo_metadata" in sources_yml
+
+    schema_yml = (DBT_DIR / "models/silver/schema.yml").read_text(encoding="utf-8")
+    # DS-001 Rev.1.7 / DD-002 7: metadata_updated_at は NULLABLE のため not_null テストを外す
+    meta_section = schema_yml.split("- name: metadata_updated_at")[1]
+    assert "not_null" not in meta_section
 
 
 def test_mart_oss_quadrant_chaoss_calculations() -> None:
