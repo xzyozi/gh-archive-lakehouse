@@ -1,10 +1,9 @@
-"""Airflow DAG: Daily GH Archive Ingestion -> GCS -> BigQuery Bronze -> dbt (Silver/Gold).
+"""Airflow DAG: Daily GH Archive Ingestion -> GCS -> Bronze -> Enrichment -> dbt (Silver/Gold).
 
 Schedules daily streaming ingestion from GH Archive to Google Cloud Storage
-without local disk storage, loads it into BigQuery Bronze, then runs the dbt
-medallion models (Staging -> Silver -> Gold) through Astronomer Cosmos so that
-each dbt model and test is a separate, individually retryable Airflow task
-(BD-001 C-ORCHESTRATE).
+without local disk storage, loads it into BigQuery Bronze, enriches top 200
+repositories via GitHub GraphQL API (DD-002), then runs the dbt medallion
+models (Staging -> Silver -> Gold) through Astronomer Cosmos (BD-001 C-ORCHESTRATE).
 """
 
 from __future__ import annotations
@@ -14,15 +13,19 @@ import os
 from pathlib import Path
 from typing import Any
 
-from airflow.operators.python import PythonOperator
+from airflow.operators.python import PythonOperator, ShortCircuitOperator
+from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator
 from airflow.providers.google.cloud.transfers.gcs_to_bigquery import GCSToBigQueryOperator
+from airflow.utils.task_group import TaskGroup
+from airflow.utils.trigger_rule import TriggerRule
 from cosmos import DbtTaskGroup, ExecutionConfig, ProfileConfig, ProjectConfig, RenderConfig
 from cosmos.constants import ExecutionMode, LoadMode, TestBehavior
 
 from airflow import DAG
 
-# Default bucket and dataset prefix from environment variables (falls back to Terraform default pattern)
+# Default bucket, project, and dataset prefix from environment variables
 GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "octopulse-lakehouse")
+GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "")
 DATASET_PREFIX = os.environ.get("GCP_DATASET_PREFIX", "octopulse")
 
 # dbt (Cosmos) settings. Paths match airflow/docker-compose.yaml mounts and airflow/Dockerfile.
@@ -76,6 +79,46 @@ def execute_daily_ingestion(ds: str, **context: Any) -> dict[str, Any]:
     return result
 
 
+def execute_daily_enrichment(ds: str, **context: Any) -> dict[str, Any]:
+    """Fetch GitHub GraphQL metadata for top 200 repositories and upload JSONL to GCS (DD-002).
+
+    Never returns or logs GITHUB_TOKEN.
+    """
+    from octopulse.enrichment.pipeline import run_daily_enrichment
+
+    target_date = datetime.date.fromisoformat(ds)
+    bucket_name = os.environ.get("GCS_BUCKET_NAME", GCS_BUCKET_NAME)
+    project_id = os.environ.get("GCP_PROJECT_ID", GCP_PROJECT_ID)
+    dataset_prefix = os.environ.get("GCP_DATASET_PREFIX", DATASET_PREFIX)
+
+    summary = run_daily_enrichment(
+        target_date=target_date,
+        gcs_bucket_name=bucket_name,
+        project_id=project_id,
+        dataset_prefix=dataset_prefix,
+    )
+
+    return {
+        "target_date": summary.target_date.isoformat(),
+        "gcs_uri": summary.gcs_uri,
+        "candidate_count": summary.candidate_count,
+        "fetched_count": summary.fetched_count,
+        "skipped_count": summary.skipped_count,
+        "total_bytes_uploaded": summary.total_bytes_uploaded,
+    }
+
+
+def check_bronze_load_succeeded(**context: Any) -> bool:
+    """Allow dbt to run even if Enrichment failed, but block dbt when Bronze load failed (DD-002 6.5)."""
+    dag_run = context.get("dag_run")
+    if dag_run is None:
+        return False
+    bronze_ti = dag_run.get_task_instance("load_gcs_to_bigquery_bronze")
+    if bronze_ti is None:
+        return False
+    return bronze_ti.state == "success"
+
+
 default_args = {
     "owner": "octopulse",
     "depends_on_past": False,
@@ -117,6 +160,65 @@ with DAG(
         autodetect=False,
     )
 
+    # Phase 4: GitHub GraphQL API Enrichment -> GCS -> Bronze Staging -> Silver MERGE (DD-002 5)
+    with TaskGroup(group_id="enrich_repo_metadata") as enrich_repo_metadata:
+        fetch_repo_metadata_task = PythonOperator(
+            task_id="fetch_repo_metadata_to_gcs",
+            python_callable=execute_daily_enrichment,
+        )
+
+        load_repo_metadata_staging_task = GCSToBigQueryOperator(
+            task_id="load_repo_metadata_staging",
+            bucket=GCS_BUCKET_NAME,
+            source_objects=[
+                "enrichment/{{ ds_nodash[:4] }}/{{ ds_nodash[4:6] }}/{{ ds_nodash[6:8] }}/"
+                "repo_metadata_{{ ds_nodash }}.jsonl"
+            ],
+            destination_project_dataset_table=f"{DATASET_PREFIX}_bronze.stg_repo_metadata",
+            source_format="NEWLINE_DELIMITED_JSON",
+            write_disposition="WRITE_TRUNCATE",
+            autodetect=False,
+        )
+
+        merge_repo_metadata_task = BigQueryInsertJobOperator(
+            task_id="merge_repo_metadata",
+            configuration={
+                "query": {
+                    "query": (
+                        f"MERGE `{GCP_PROJECT_ID}.{DATASET_PREFIX}_silver.repo_metadata` AS T "
+                        f"USING `{GCP_PROJECT_ID}.{DATASET_PREFIX}_bronze.stg_repo_metadata` AS S "
+                        "ON T.repo_name = S.repo_name "
+                        "WHEN MATCHED THEN UPDATE SET "
+                        "primary_language = S.primary_language, "
+                        "topics = S.topics, "
+                        "description = S.description, "
+                        "repo_created_at = S.repo_created_at, "
+                        "total_stars = S.total_stars, "
+                        "total_forks = S.total_forks, "
+                        "metadata_updated_at = S.metadata_updated_at "
+                        "WHEN NOT MATCHED THEN INSERT ("
+                        "repo_name, primary_language, topics, description, "
+                        "repo_created_at, total_stars, total_forks, metadata_updated_at"
+                        ") VALUES ("
+                        "S.repo_name, S.primary_language, S.topics, S.description, "
+                        "S.repo_created_at, S.total_stars, S.total_forks, S.metadata_updated_at)"
+                    ),
+                    "useLegacySql": False,
+                    "maximumBytesBilled": "1073741824",
+                }
+            },
+        )
+
+        fetch_repo_metadata_task >> load_repo_metadata_staging_task >> merge_repo_metadata_task
+
+    # DD-002 6.5: Run dbt even if Enrichment failed, as long as Bronze load succeeded.
+    # Placed outside DbtTaskGroup so internal TestBehavior.AFTER_EACH keeps default ALL_SUCCESS.
+    verify_bronze_before_dbt = ShortCircuitOperator(
+        task_id="verify_bronze_before_dbt",
+        python_callable=check_bronze_load_succeeded,
+        trigger_rule=TriggerRule.ALL_DONE,
+    )
+
     # Phase 5: dbt medallion models (Staging -> Silver -> Gold) as a Cosmos task group.
     # - Tests run right after each model (AFTER_EACH) so bad data never reaches downstream models.
     # - run_date is the logical date: re-running a past ds reprocesses only that window (NFR-004 idempotency).
@@ -148,4 +250,4 @@ with DAG(
         default_args={"retries": 1},
     )
 
-    ingest_task >> load_bronze_task >> dbt_transform
+    ingest_task >> load_bronze_task >> enrich_repo_metadata >> verify_bronze_before_dbt >> dbt_transform

@@ -54,6 +54,20 @@ def test_storage_lifecycle_is_7_days() -> None:
     assert "age        = 7" in storage_tf or "age = 7" in storage_tf
 
 
+def _extract_table_schema(bigquery_tf: str, table_resource_name: str) -> dict[str, tuple[str, str]]:
+    """Extract {column_name: (type, mode)} from a specific google_bigquery_table block."""
+    pattern = rf'resource\s+"google_bigquery_table"\s+"{re.escape(table_resource_name)}"\s+\{{.*?\n\}}'
+    block_match = re.search(pattern, bigquery_tf, re.DOTALL)
+    assert block_match is not None, f"Table resource not found: {table_resource_name}"
+    block = block_match.group(0)
+    fields = re.findall(
+        r'name\s*=\s*"([^"]+)".*?type\s*=\s*"([^"]+)".*?mode\s*=\s*"([^"]+)"',
+        block,
+        re.DOTALL,
+    )
+    return {name: (dtype, mode) for name, dtype, mode in fields}
+
+
 def test_bigquery_bronze_table_schema() -> None:
     """DS-001 2.3: stg_github_events のスキーマが仕様書と一致すること。"""
     bigquery_tf = (TERRAFORM_DIR / "bigquery.tf").read_text(encoding="utf-8")
@@ -62,13 +76,7 @@ def test_bigquery_bronze_table_schema() -> None:
     assert 'field         = "event_date"' in bigquery_tf
     assert 'clustering = ["repo_name", "type"]' in bigquery_tf
 
-    # 各フィールドブロックから name, type, mode を抽出
-    fields = re.findall(
-        r'name\s*=\s*"([^"]+)".*?type\s*=\s*"([^"]+)".*?mode\s*=\s*"([^"]+)"',
-        bigquery_tf,
-        re.DOTALL,
-    )
-    schema_dict = {name: (dtype, mode) for name, dtype, mode in fields}
+    schema_dict = _extract_table_schema(bigquery_tf, "stg_github_events")
 
     expected_fields = {
         "id": ("STRING", "REQUIRED"),
@@ -82,6 +90,26 @@ def test_bigquery_bronze_table_schema() -> None:
     }
 
     assert schema_dict == expected_fields, f"Schema mismatch: {schema_dict}"
+
+
+def test_bigquery_enrichment_tables_schema() -> None:
+    """DS-001 2.4③ / DD-002 5: stg_repo_metadata と repo_metadata のスキーマが仕様書と一致すること。"""
+    bigquery_tf = (TERRAFORM_DIR / "bigquery.tf").read_text(encoding="utf-8")
+
+    expected_fields = {
+        "repo_name": ("STRING", "REQUIRED"),
+        "primary_language": ("STRING", "NULLABLE"),
+        "topics": ("STRING", "REPEATED"),
+        "description": ("STRING", "NULLABLE"),
+        "repo_created_at": ("TIMESTAMP", "NULLABLE"),
+        "total_stars": ("INT64", "NULLABLE"),
+        "total_forks": ("INT64", "NULLABLE"),
+        "metadata_updated_at": ("TIMESTAMP", "REQUIRED"),
+    }
+
+    assert _extract_table_schema(bigquery_tf, "stg_repo_metadata") == expected_fields
+    assert _extract_table_schema(bigquery_tf, "repo_metadata") == expected_fields
+    assert 'clustering = ["repo_name"]' in bigquery_tf
 
 
 def test_workload_identity_federation_configured() -> None:

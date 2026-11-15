@@ -60,6 +60,4 @@ models:
       - name: total_forks
         description: "累計 Fork 数"
       - name: metadata_updated_at
-        description: "メタデータ更新日時"
-        tests:
-          - not_null
+        description: "メタデータ更新日時 (NULL は未補完, DS-001 Rev.1.7)"
