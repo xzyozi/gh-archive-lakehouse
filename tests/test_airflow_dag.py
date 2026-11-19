@@ -187,5 +187,7 @@ def test_compose_passes_dataset_prefix_and_writable_dbt_paths() -> None:
     """dbt が参照する GCP_DATASET_PREFIX を渡し、読み取り専用マウントでも書き込める出力先を指定すること。"""
     compose = COMPOSE_FILE.read_text(encoding="utf-8")
     assert "GCP_DATASET_PREFIX:" in compose
+    assert "GOOGLE_CLOUD_PROJECT:" in compose
+    assert "AIRFLOW_CONN_GOOGLE_CLOUD_DEFAULT:" in compose
     assert "DBT_TARGET_PATH: /tmp/dbt_target" in compose
     assert "DBT_LOG_PATH: /tmp/dbt_logs" in compose

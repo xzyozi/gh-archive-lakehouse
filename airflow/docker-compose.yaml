@@ -16,6 +16,8 @@ x-airflow-common: &airflow-common
     GOOGLE_APPLICATION_CREDENTIALS: /home/airflow/.config/gcloud/application_default_credentials.json
     GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-octopulse-lakehouse}
     GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+    GOOGLE_CLOUD_PROJECT: ${GCP_PROJECT_ID:-}
+    AIRFLOW_CONN_GOOGLE_CLOUD_DEFAULT: "google-cloud-platform://?project=${GCP_PROJECT_ID:-}"
     # BigQuery dataset prefix. Used by both the DAG and dbt (generate_schema_name macro / sources.yml).
     GCP_DATASET_PREFIX: ${GCP_DATASET_PREFIX:-octopulse}
     # dbt target in profiles.yml (dev / prod)
