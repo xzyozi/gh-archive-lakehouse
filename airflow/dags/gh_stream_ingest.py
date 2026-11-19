@@ -19,7 +19,7 @@ from airflow.providers.google.cloud.transfers.gcs_to_bigquery import GCSToBigQue
 from airflow.utils.task_group import TaskGroup
 from airflow.utils.trigger_rule import TriggerRule
 from cosmos import DbtTaskGroup, ExecutionConfig, ProfileConfig, ProjectConfig, RenderConfig
-from cosmos.constants import ExecutionMode, LoadMode, TestBehavior
+from cosmos.constants import ExecutionMode, InvocationMode, LoadMode, TestBehavior
 
 from airflow import DAG
 
@@ -237,6 +237,7 @@ with DAG(
         ),
         render_config=RenderConfig(
             load_method=LoadMode.DBT_LS,
+            invocation_mode=InvocationMode.SUBPROCESS,
             test_behavior=TestBehavior.AFTER_EACH,
             dbt_executable_path=DBT_EXECUTABLE_PATH,
             dbt_deps=False,

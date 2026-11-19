@@ -103,6 +103,7 @@ def test_dag_imports_cosmos() -> None:
         "ExecutionConfig",
         "RenderConfig",
         "ExecutionMode",
+        "InvocationMode",
         "LoadMode",
         "TestBehavior",
     ):
@@ -118,8 +119,9 @@ def test_dbt_task_group_contract() -> None:
     # Dockerfile の専用 venv で実行する (Airflow と dbt の依存を分離)
     assert "ExecutionMode.LOCAL" in source
     assert "/opt/airflow/dbt_venv/bin/dbt" in source
-    # Q4: まず DBT_LS で描画 / Q7: 各モデル直後にテスト
+    # Q4: まず DBT_LS で描画 (専用 dbt_venv のため SUBPROCESS 明示) / Q7: 各モデル直後にテスト
     assert "LoadMode.DBT_LS" in source
+    assert "InvocationMode.SUBPROCESS" in source
     assert "TestBehavior.AFTER_EACH" in source
     # 論理日付を dbt に渡す (NFR-004: 過去日の再実行が冪等になる)
     assert '"vars": {"run_date": "{{ ds }}"}' in source
