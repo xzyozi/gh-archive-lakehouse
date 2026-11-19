@@ -120,3 +120,13 @@ def test_workload_identity_federation_configured() -> None:
     assert "https://token.actions.githubusercontent.com" in iam_tf
     assert "roles/iam.workloadIdentityUser" in iam_tf
     assert "assertion.repository ==" in iam_tf
+
+
+def test_no_invalid_locals_plural_reference() -> None:
+    """HCL のローカル変数参照は locals. (複数形) ではなく local. (単数形) であること。"""
+    for tf_file in TERRAFORM_DIR.glob("*.tf"):
+        for line_no, line in enumerate(tf_file.read_text(encoding="utf-8").splitlines(), start=1):
+            code = line.split("#", 1)[0]
+            assert not re.search(r"\blocals\.", code), (
+                f"Invalid 'locals.' reference in {tf_file.name}:{line_no} (use 'local.')"
+            )
