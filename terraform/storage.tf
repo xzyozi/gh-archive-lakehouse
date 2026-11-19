@@ -1,7 +1,7 @@
 # GCS Filtered JSONL 一時蓄積用バケット (BD-001 C-LAKE, NFR-001)
 # 配置後7日で自動削除するライフサイクルルールによりストレージ無料枠 (5GB) を永続維持。
 resource "google_storage_bucket" "lakehouse_raw" {
-  name          = locals.bucket_name
+  name          = local.bucket_name
   location      = var.region
   storage_class = "STANDARD"
 
@@ -22,5 +22,5 @@ resource "google_storage_bucket" "lakehouse_raw" {
     }
   }
 
-  labels = locals.common_labels
+  labels = local.common_labels
 }
