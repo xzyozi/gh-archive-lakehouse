@@ -19,7 +19,7 @@ from airflow.providers.google.cloud.transfers.gcs_to_bigquery import GCSToBigQue
 from airflow.utils.task_group import TaskGroup
 from airflow.utils.trigger_rule import TriggerRule
 from cosmos import DbtTaskGroup, ExecutionConfig, ProfileConfig, ProjectConfig, RenderConfig
-from cosmos.constants import ExecutionMode, LoadMode, TestBehavior
+from cosmos.constants import ExecutionMode, InvocationMode, LoadMode, TestBehavior
 
 from airflow import DAG
 
@@ -156,8 +156,11 @@ with DAG(
             f"{DATASET_PREFIX}_bronze.stg_github_events${{{{ ds_nodash }}}}"
         ),
         source_format="NEWLINE_DELIMITED_JSON",
+        create_disposition="CREATE_NEVER",
         write_disposition="WRITE_TRUNCATE",
-        autodetect=False,
+        time_partitioning={"type": "DAY", "field": "event_date"},
+        cluster_fields=["repo_name", "type"],
+        autodetect=None,
     )
 
     # Phase 4: GitHub GraphQL API Enrichment -> GCS -> Bronze Staging -> Silver MERGE (DD-002 5)
@@ -176,8 +179,9 @@ with DAG(
             ],
             destination_project_dataset_table=f"{DATASET_PREFIX}_bronze.stg_repo_metadata",
             source_format="NEWLINE_DELIMITED_JSON",
+            create_disposition="CREATE_NEVER",
             write_disposition="WRITE_TRUNCATE",
-            autodetect=False,
+            autodetect=None,
         )
 
         merge_repo_metadata_task = BigQueryInsertJobOperator(
@@ -237,6 +241,7 @@ with DAG(
         ),
         render_config=RenderConfig(
             load_method=LoadMode.DBT_LS,
+            invocation_mode=InvocationMode.SUBPROCESS,
             test_behavior=TestBehavior.AFTER_EACH,
             dbt_executable_path=DBT_EXECUTABLE_PATH,
             dbt_deps=False,

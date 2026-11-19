@@ -53,8 +53,11 @@ def test_dag_task_parameters_and_contracts() -> None:
     # 3. 冪等性契約: WRITE_TRUNCATE
     assert 'write_disposition="WRITE_TRUNCATE"' in source
 
-    # 4. スキーマ契約: 既存テーブル定義を利用 (autodetect=False)
-    assert "autodetect=False" in source
+    # 4. スキーマ契約: 既存テーブル定義を利用 (autodetect=None, create_disposition=CREATE_NEVER)
+    assert "autodetect=None" in source
+    assert 'create_disposition="CREATE_NEVER"' in source
+    assert 'time_partitioning={"type": "DAY", "field": "event_date"}' in source
+    assert 'cluster_fields=["repo_name", "type"]' in source
 
     # 5. 論点①遵守: 宛先テーブルにパーティションデコレータ ($YYYYMMDD) が付与されていること
     assert "stg_github_events" in source
@@ -103,6 +106,7 @@ def test_dag_imports_cosmos() -> None:
         "ExecutionConfig",
         "RenderConfig",
         "ExecutionMode",
+        "InvocationMode",
         "LoadMode",
         "TestBehavior",
     ):
@@ -118,8 +122,9 @@ def test_dbt_task_group_contract() -> None:
     # Dockerfile の専用 venv で実行する (Airflow と dbt の依存を分離)
     assert "ExecutionMode.LOCAL" in source
     assert "/opt/airflow/dbt_venv/bin/dbt" in source
-    # Q4: まず DBT_LS で描画 / Q7: 各モデル直後にテスト
+    # Q4: まず DBT_LS で描画 (専用 dbt_venv のため SUBPROCESS 明示) / Q7: 各モデル直後にテスト
     assert "LoadMode.DBT_LS" in source
+    assert "InvocationMode.SUBPROCESS" in source
     assert "TestBehavior.AFTER_EACH" in source
     # 論理日付を dbt に渡す (NFR-004: 過去日の再実行が冪等になる)
     assert '"vars": {"run_date": "{{ ds }}"}' in source
@@ -148,7 +153,7 @@ def test_enrichment_task_group_and_failure_isolation_contract() -> None:
     assert 'task_id="merge_repo_metadata"' in source
     assert "fetch_repo_metadata_task >> load_repo_metadata_staging_task >> merge_repo_metadata_task" in source
 
-    # Staging Load: WRITE_TRUNCATE, NDJSON, autodetect=False, enrichment/YYYY/MM/DD/
+    # Staging Load: WRITE_TRUNCATE, NDJSON, autodetect=None, create_disposition=CREATE_NEVER, enrichment/YYYY/MM/DD/
     assert "enrichment/{{ ds_nodash[:4] }}/{{ ds_nodash[4:6] }}/{{ ds_nodash[6:8] }}/" in source
     assert "repo_metadata_{{ ds_nodash }}.jsonl" in source
     assert "_bronze.stg_repo_metadata" in source
@@ -185,5 +190,7 @@ def test_compose_passes_dataset_prefix_and_writable_dbt_paths() -> None:
     """dbt が参照する GCP_DATASET_PREFIX を渡し、読み取り専用マウントでも書き込める出力先を指定すること。"""
     compose = COMPOSE_FILE.read_text(encoding="utf-8")
     assert "GCP_DATASET_PREFIX:" in compose
+    assert "GOOGLE_CLOUD_PROJECT:" in compose
+    assert "AIRFLOW_CONN_GOOGLE_CLOUD_DEFAULT:" in compose
     assert "DBT_TARGET_PATH: /tmp/dbt_target" in compose
     assert "DBT_LOG_PATH: /tmp/dbt_logs" in compose

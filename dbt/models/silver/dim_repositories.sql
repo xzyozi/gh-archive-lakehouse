@@ -42,7 +42,7 @@ existing_records as (
     select
         cast(null as string) as repo_name,
         cast(null as timestamp) as repo_created_at
-    where false
+    limit 0
     {% endif %}
 ),
 
