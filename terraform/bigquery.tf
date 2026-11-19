@@ -8,7 +8,7 @@ resource "google_bigquery_dataset" "bronze" {
 
   default_partition_expiration_ms = 2592000000 # 30日 (DS-001 2.3)
 
-  labels = locals.common_labels
+  labels = local.common_labels
 }
 
 # Silver データセット (クレンジング済みスター・スキーマ層)
@@ -19,7 +19,7 @@ resource "google_bigquery_dataset" "silver" {
 
   default_partition_expiration_ms = 7776000000 # 90日 (DS-001 2.4)
 
-  labels = locals.common_labels
+  labels = local.common_labels
 }
 
 # Gold データセット (集約マート層 - Looker Studio 接続用)
@@ -30,7 +30,7 @@ resource "google_bigquery_dataset" "gold" {
 
   # Gold層は恒久保持のため default_partition_expiration_ms は設定しない (DS-001 1.2)
 
-  labels = locals.common_labels
+  labels = local.common_labels
 }
 
 # Bronze 生ログテーブル: stg_github_events (DS-001 2.3)
@@ -100,7 +100,7 @@ resource "google_bigquery_table" "stg_github_events" {
     }
   ])
 
-  labels = locals.common_labels
+  labels = local.common_labels
 }
 
 # Bronze Enrichment 着地テーブル: stg_repo_metadata (DS-001 2.2 / DD-002 5)
@@ -162,7 +162,7 @@ resource "google_bigquery_table" "stg_repo_metadata" {
     }
   ])
 
-  labels = locals.common_labels
+  labels = local.common_labels
 }
 
 # Silver Enrichment メタデータテーブル: repo_metadata (DS-001 2.4③ / DD-002)
@@ -226,5 +226,5 @@ resource "google_bigquery_table" "repo_metadata" {
     }
   ])
 
-  labels = locals.common_labels
+  labels = local.common_labels
 }
