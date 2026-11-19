@@ -56,6 +56,8 @@ def test_dag_task_parameters_and_contracts() -> None:
     # 4. スキーマ契約: 既存テーブル定義を利用 (autodetect=None, create_disposition=CREATE_NEVER)
     assert "autodetect=None" in source
     assert 'create_disposition="CREATE_NEVER"' in source
+    assert 'time_partitioning={"type": "DAY", "field": "event_date"}' in source
+    assert 'cluster_fields=["repo_name", "type"]' in source
 
     # 5. 論点①遵守: 宛先テーブルにパーティションデコレータ ($YYYYMMDD) が付与されていること
     assert "stg_github_events" in source

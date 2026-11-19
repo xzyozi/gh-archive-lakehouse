@@ -158,6 +158,8 @@ with DAG(
         source_format="NEWLINE_DELIMITED_JSON",
         create_disposition="CREATE_NEVER",
         write_disposition="WRITE_TRUNCATE",
+        time_partitioning={"type": "DAY", "field": "event_date"},
+        cluster_fields=["repo_name", "type"],
         autodetect=None,
     )
 
