@@ -53,8 +53,9 @@ def test_dag_task_parameters_and_contracts() -> None:
     # 3. 冪等性契約: WRITE_TRUNCATE
     assert 'write_disposition="WRITE_TRUNCATE"' in source
 
-    # 4. スキーマ契約: 既存テーブル定義を利用 (autodetect=False)
-    assert "autodetect=False" in source
+    # 4. スキーマ契約: 既存テーブル定義を利用 (autodetect=None, create_disposition=CREATE_NEVER)
+    assert "autodetect=None" in source
+    assert 'create_disposition="CREATE_NEVER"' in source
 
     # 5. 論点①遵守: 宛先テーブルにパーティションデコレータ ($YYYYMMDD) が付与されていること
     assert "stg_github_events" in source

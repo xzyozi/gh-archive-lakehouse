@@ -156,8 +156,9 @@ with DAG(
             f"{DATASET_PREFIX}_bronze.stg_github_events${{{{ ds_nodash }}}}"
         ),
         source_format="NEWLINE_DELIMITED_JSON",
+        create_disposition="CREATE_NEVER",
         write_disposition="WRITE_TRUNCATE",
-        autodetect=False,
+        autodetect=None,
     )
 
     # Phase 4: GitHub GraphQL API Enrichment -> GCS -> Bronze Staging -> Silver MERGE (DD-002 5)
@@ -176,8 +177,9 @@ with DAG(
             ],
             destination_project_dataset_table=f"{DATASET_PREFIX}_bronze.stg_repo_metadata",
             source_format="NEWLINE_DELIMITED_JSON",
+            create_disposition="CREATE_NEVER",
             write_disposition="WRITE_TRUNCATE",
-            autodetect=False,
+            autodetect=None,
         )
 
         merge_repo_metadata_task = BigQueryInsertJobOperator(
