@@ -153,7 +153,7 @@ def test_enrichment_task_group_and_failure_isolation_contract() -> None:
     assert 'task_id="merge_repo_metadata"' in source
     assert "fetch_repo_metadata_task >> load_repo_metadata_staging_task >> merge_repo_metadata_task" in source
 
-    # Staging Load: WRITE_TRUNCATE, NDJSON, autodetect=False, enrichment/YYYY/MM/DD/
+    # Staging Load: WRITE_TRUNCATE, NDJSON, autodetect=None, create_disposition=CREATE_NEVER, enrichment/YYYY/MM/DD/
     assert "enrichment/{{ ds_nodash[:4] }}/{{ ds_nodash[4:6] }}/{{ ds_nodash[6:8] }}/" in source
     assert "repo_metadata_{{ ds_nodash }}.jsonl" in source
     assert "_bronze.stg_repo_metadata" in source

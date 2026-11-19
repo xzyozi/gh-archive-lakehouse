@@ -139,6 +139,9 @@ def test_dim_repositories_incremental_repo_age() -> None:
     assert "source('silver', 'repo_metadata')" in sql
     # API 由来の開設日を優先し、未補完時は CreateEvent 累積値を使用
     assert "coalesce(r.repo_created_at, e.repo_created_at, c.repo_created_at)" in sql
+    # BigQuery Standard SQL では FROM 句なし WHERE false がエラーになるため limit 0 を使用
+    assert "limit 0" in sql.lower()
+    assert "where false" not in sql.lower()
 
     sources_yml = (DBT_DIR / "models/staging/sources.yml").read_text(encoding="utf-8")
     assert "- name: silver" in sources_yml
